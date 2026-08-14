@@ -82,6 +82,10 @@ class IslandService : Service() {
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setFlag(Notification.FLAG_ONGOING_EVENT, true)
             .setColorized(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setWhen(System.currentTimeMillis() + 60_000L * 15) // 占位: 回血倒计时(数据到达后覆盖)
+            .setShortCriticalText("$provName")
             .setContentIntent(
                 android.app.PendingIntent.getActivity(
                     this, 0,
@@ -91,6 +95,10 @@ class IslandService : Service() {
             )
 
         builder.setContentText(if (win != null) "${win.label} · 用量 ${usedPct}% · 已过 ${timePct}%" else "加载中…")
+
+        if (win != null && win.resetAt > 0) {
+            builder.setWhen(win.resetAt * 1000L) // 真实回血时刻 → 状态芯片倒计时
+        }
 
         if (android.os.Build.VERSION.SDK_INT >= 36) {
             val style = Notification.ProgressStyle()

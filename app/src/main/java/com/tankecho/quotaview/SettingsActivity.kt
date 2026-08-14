@@ -319,6 +319,13 @@ class SettingsActivity : AppCompatActivity() {
             sb.append("SDK<36, ProgressStyle 不可用\n")
         }
         sb.append("service running=").append(isServiceRunning())
+        // 读回诊断: 系统是否真的打了 FLAG_PROMOTED_ONGOING
+        val promoted = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promoted", false)
+        val diagTs = getSharedPreferences("qv", MODE_PRIVATE).getLong("island_diag_ts", 0)
+        sb.append("\npromoted(readback)=").append(promoted)
+        if (diagTs > 0) sb.append("\nreadback时间=").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(diagTs)))
+        sb.append("\nlistener授权=").append(android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners")?.contains(packageName) == true)
         android.app.AlertDialog.Builder(this)
             .setTitle("灵动岛诊断")
             .setMessage(sb.toString())
