@@ -332,12 +332,29 @@ class SettingsActivity : AppCompatActivity() {
         val fluid = try { OppoFluidCloud.share(this, 0, 0, "Codex", "诊断") } catch (e: Exception) {
             JSONObject().put("code", -9).put("message", e.message ?: "调用异常")
         }
-        sb.append("\n流体云端侧=").append(fluid.toString().take(140))
-        android.app.AlertDialog.Builder(this)
+        sb.append("\n流体云端侧=").append(fluid.toString())
+
+        val msg = sb.toString()
+        val dlg = android.app.AlertDialog.Builder(this)
             .setTitle("灵动岛诊断")
-            .setMessage(sb.toString())
-            .setPositiveButton("好的", null)
-            .show()
+            .create()
+        val scroll = ScrollView(this)
+        val innerPad = dp(20)
+        scroll.setPadding(innerPad, innerPad, innerPad, innerPad)
+        scroll.addView(TextView(this).apply {
+            text = msg; textSize = 12f; setTextColor(0xFFC9CDD6.toInt())
+            setTextIsSelectable(true)
+        })
+        dlg.setView(scroll)
+        dlg.setButton(android.app.AlertDialog.BUTTON_NEUTRAL, "复制") { _, _ ->
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("diag", msg))
+            Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
+        }
+        dlg.setButton(android.app.AlertDialog.BUTTON_POSITIVE, "好的",android.content.DialogInterface.OnClickListener { _, _ -> })
+        dlg.show()
+        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).paint.isFakeBoldText = true
+        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setTextColor(0xFF6E8BFF.toInt())
     }
 
     private fun isServiceRunning(): Boolean {

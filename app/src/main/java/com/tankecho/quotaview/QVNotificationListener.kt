@@ -9,8 +9,18 @@ import android.service.notification.StatusBarNotification
  */
 class QVNotificationListener : NotificationListenerService() {
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        // 授权后立即读回当前已存在的通知, 不用等服务下次 post
+        activeNotifications?.forEach { handle(it) }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != packageName) return
+        if (sbn != null) handle(sbn)
+    }
+
+    private fun handle(sbn: StatusBarNotification) {
+        if (sbn.packageName != packageName) return
         val n = sbn.notification
         val promoted = n.flags and android.app.Notification.FLAG_PROMOTED_ONGOING != 0
         val ongoing = n.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0
