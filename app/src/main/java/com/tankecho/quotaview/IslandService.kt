@@ -145,6 +145,16 @@ class IslandService : Service() {
 
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTI_ID, buildNotification(win))
+
+        // ColorOS 流体云端侧 (并行尝试, code=0 即上岛)
+        if (win != null && android.os.Build.MANUFACTURER.equals("OPPO", true)) {
+            try { OppoFluidCloud.share(this, win.usedPercent, win.timeElapsedPercent, provName(win), win.label) } catch (_: Exception) {}
+        }
+    }
+
+    private fun provName(win: QuotaWindow): String {
+        val prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        return if (prefs.getString("ring_provider", "codex") == "codex") "Codex" else "GLM"
     }
 
     private fun labelToKey(label: String): String = when {
