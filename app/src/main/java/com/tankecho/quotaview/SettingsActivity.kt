@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
+import org.json.JSONObject
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -326,11 +327,12 @@ class SettingsActivity : AppCompatActivity() {
         if (diagTs > 0) sb.append("\nreadback时间=").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(diagTs)))
         sb.append("\nlistener授权=").append(android.provider.Settings.Secure.getString(
             contentResolver, "enabled_notification_listeners")?.contains(packageName) == true)
-        // 流体云端侧调用结果
-        val fluid = getSharedPreferences("qv", MODE_PRIVATE).getString("fluid_result", null)
-        if (fluid != null) {
-            sb.append("\n流体云端侧=").append(fluid.take(120))
+        // 流体云端侧: 现场实测一次 (不依赖后台)
+        sb.append("\nMANUFACTURER=").append(android.os.Build.MANUFACTURER)
+        val fluid = try { OppoFluidCloud.share(this, 0, 0, "Codex", "诊断") } catch (e: Exception) {
+            JSONObject().put("code", -9).put("message", e.message ?: "调用异常")
         }
+        sb.append("\n流体云端侧=").append(fluid.toString().take(140))
         android.app.AlertDialog.Builder(this)
             .setTitle("灵动岛诊断")
             .setMessage(sb.toString())

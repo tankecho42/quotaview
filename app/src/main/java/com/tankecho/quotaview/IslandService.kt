@@ -146,8 +146,8 @@ class IslandService : Service() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTI_ID, buildNotification(win))
 
-        // ColorOS 流体云端侧 (并行尝试, code=0 即上岛)
-        if (win != null && android.os.Build.MANUFACTURER.equals("OPPO", true)) {
+        // ColorOS 流体云端侧 (无条件尝试, 结果记录进 prefs 供诊断)
+        if (win != null) {
             try { OppoFluidCloud.share(this, win.usedPercent, win.timeElapsedPercent, provName(win), win.label) } catch (_: Exception) {}
         }
     }
