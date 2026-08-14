@@ -156,7 +156,6 @@ class MainActivity : AppCompatActivity() {
         }
         headerRow.addView(android.widget.ImageView(this).apply {
             setImageResource(if (st.id == "codex") R.drawable.ic_openai else R.drawable.ic_zai)
-            setColorFilter(0xFFE6E8EE.toInt(), android.graphics.PorterDuff.Mode.SRC_ATOP)
             layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(10) }
         })
         headerRow.addView(TextView(this).apply {

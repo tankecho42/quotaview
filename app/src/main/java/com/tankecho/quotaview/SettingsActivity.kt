@@ -98,7 +98,6 @@ class SettingsActivity : AppCompatActivity() {
         }
         headerRow.addView(android.widget.ImageView(this).apply {
             setImageResource(iconRes)
-            setColorFilter(0xFFB4B9C6.toInt(), android.graphics.PorterDuff.Mode.SRC_ATOP)
             layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { rightMargin = dp(10) }
         })
         val titleCol = LinearLayout(this).apply {
