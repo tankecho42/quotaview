@@ -1,0 +1,4 @@
+*.apk
+.gradle/
+local.properties
+build/
