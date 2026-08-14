@@ -71,6 +71,9 @@ class IslandService : Service() {
         val prov = prefs.getString("ring_provider", "codex")!!
         val provName = if (prov == "codex") "Codex" else "GLM"
 
+        val usedPct = win?.usedPercent?.coerceIn(0, 100) ?: 0
+        val timePct = win?.timeElapsedPercent?.coerceIn(0, 100) ?: 0
+
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("$provName · 灵动岛")
@@ -87,17 +90,9 @@ class IslandService : Service() {
                 )
             )
 
-        if (win == null) {
-            return builder.setContentText("加载中…").build()
-        }
-
-        val usedPct = win.usedPercent.coerceIn(0, 100)
-        val timePct = win.timeElapsedPercent.coerceIn(0, 100)
-
-        builder.setContentText("${win.label} · 用量 ${usedPct}% · 已过 ${timePct}%")
+        builder.setContentText(if (win != null) "${win.label} · 用量 ${usedPct}% · 已过 ${timePct}%" else "加载中…")
 
         if (android.os.Build.VERSION.SDK_INT >= 36) {
-            // Android 16 Live Updates → ColorOS 流体云提升
             val style = Notification.ProgressStyle()
                 .setProgress(usedPct)
                 .setProgressSegments(listOf(
@@ -109,8 +104,19 @@ class IslandService : Service() {
                 ))
                 .setStyledByProgress(true)
             builder.setStyle(style)
-            // 显式请求 promoted ongoing (官方文档要求; key 值来自官方文档)
             builder.extras.putBoolean("android.requestPromotedOngoing", true)
+
+            // 诊断: 全部 promotable 条件 + 判定
+            val n = builder.build()
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            android.util.Log.i("QVIsland", buildString {
+                append("diagnostic: hasPromotableCharacteristics=").append(n.hasPromotableCharacteristics())
+                append(" canPostPromoted=").append(runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false))
+                append(" hasStyle=").append(n.extras.containsKey("android.progressSegments"))
+                append(" ongoingFlag=").append(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
+                append(" title=").append(n.extras.getCharSequence(Notification.EXTRA_TITLE) != null)
+                append(" colorized=").append(n.extras.getBoolean("android.colorized"))
+            })
         }
         return builder.build()
     }

@@ -291,7 +291,45 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         refreshRingPreview(prefs)
+
+        // 诊断按钮
+        val diagBtn = TextView(this).apply {
+            text = "🩺 诊断灵动岛"
+            textSize = 13f; setTextColor(0xFF6E8BFF.toInt()); paint.isFakeBoldText = true
+            setPadding(dp(2), dp(14), dp(2), dp(6))
+            setOnClickListener { diagIsland() }
+        }
+        card.addView(diagBtn)
         return card
+    }
+
+    private fun diagIsland() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val sb = StringBuilder()
+        sb.append("SDK=").append(android.os.Build.VERSION.SDK_INT).append(" (").append(android.os.Build.VERSION.RELEASE).append(")\n")
+        sb.append("ColorOS=").append(android.os.Build.VERSION.INCREMENTAL ?: "?").append("\n")
+        if (android.os.Build.VERSION.SDK_INT >= 36) {
+            sb.append("hasPromotableCharacteristics(需通知已post)=").append("(post后见logcat QVIsland)\n")
+            sb.append("canPostPromotedNotifications=").append(runCatching { nm.canPostPromotedNotifications() }.getOrElse { it.message }).append("\n")
+            sb.append("POST_NOTIFICATIONS granted=").append(
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ).append("\n")
+            sb.append("channel importance=").append(nm.getNotificationChannel("qv_island")?.importance ?: "null").append("\n")
+        } else {
+            sb.append("SDK<36, ProgressStyle 不可用\n")
+        }
+        sb.append("service running=").append(isServiceRunning())
+        android.app.AlertDialog.Builder(this)
+            .setTitle("灵动岛诊断")
+            .setMessage(sb.toString())
+            .setPositiveButton("好的", null)
+            .show()
+    }
+
+    private fun isServiceRunning(): Boolean {
+        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        @Suppress("DEPRECATION")
+        return am.getRunningServices(Int.MAX_VALUE).any { it.service.className == "com.tankecho.quotaview.IslandService" }
     }
 
     private fun refreshRingPreview(prefs: SharedPreferences) {
