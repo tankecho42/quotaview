@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 class SettingsActivity : AppCompatActivity() {
 
     private val scope = CoroutineScope(Dispatchers.Main)
-    private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false)
+    private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false, val secret: Boolean = false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,23 +52,16 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(header)
         root.addView(sectionLabel("PROVIDERS"))
 
-        root.addView(providerCard(prefs, "codex", "⚡ Codex", "ChatGPT Plan · wham/usage",
+        root.addView(providerCard(prefs, "codex", R.drawable.ic_openai, "Codex", "ChatGPT Plan · wham/usage",
             listOf(
-                FieldDef("codex_token", "access_token", "~/.codex/auth.json → tokens.access_token"),
+                FieldDef("codex_token", "access_token", "~/.codex/auth.json → tokens.access_token", secret = true),
                 FieldDef("codex_account", "account_id", "auth.json → tokens.account_id"),
             )) { CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty()) })
 
-        root.addView(providerCard(prefs, "glm", "🧩 GLM Coding Plan", "bigmodel · quota/limit",
+        root.addView(providerCard(prefs, "glm", R.drawable.ic_zai, "GLM Coding Plan", "bigmodel · quota/limit",
             listOf(
-                FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key"),
+                FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key", secret = true),
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
-
-        // 费用模拟
-        root.addView(sectionLabel("COST"))
-        val costSec = section("💰 费用模拟", "本地 token 明细 → 等量 API 成本")
-        costSec.addView(fieldLabel("明细 JSON"))
-        costSec.addView(input(prefs, "cost_breakdown_json", "粘贴采集器 collect_tokens.py 的输出", multiline = true))
-        root.addView(costSec)
 
         root.addView(TextView(this).apply {
             text = "凭证只存本机 SharedPreferences。\nCodex → chatgpt.com · GLM → open.bigmodel.cn\n不经任何第三方服务器。"
@@ -82,7 +75,7 @@ class SettingsActivity : AppCompatActivity() {
     // ---------- provider 卡片: 开关 + 内嵌配置 + 打开即验证 ----------
 
     private fun providerCard(
-        prefs: SharedPreferences, id: String, title: String, subtitle: String,
+        prefs: SharedPreferences, id: String, @Suppress("unused") iconRes: Int, title: String, subtitle: String,
         fields: List<FieldDef>, validator: () -> ProviderStatus,
     ): LinearLayout {
         val card = LinearLayout(this).apply {
@@ -98,11 +91,16 @@ class SettingsActivity : AppCompatActivity() {
 
         val hasConfig = fields.any { !prefs.getString(it.key, "").isNullOrBlank() }
 
-        // header row: 标题列 + chevron + switch
+        // header row: logo + 标题列 + chevron + switch
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        headerRow.addView(android.widget.ImageView(this).apply {
+            setImageResource(iconRes)
+            setColorFilter(0xFFB4B9C6.toInt(), android.graphics.PorterDuff.Mode.SRC_ATOP)
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { rightMargin = dp(10) }
+        })
         val titleCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -133,7 +131,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         fields.forEach { f ->
             body.addView(fieldLabel(f.label))
-            body.addView(input(prefs, f.key, f.hint, f.multiline))
+            body.addView(input(prefs, f.key, f.hint, f.multiline, f.secret))
         }
         card.addView(body)
         if (!hasConfig) body.visibility = View.GONE else chevron.text = "▾"
@@ -208,7 +206,7 @@ class SettingsActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
     }
 
-    private fun input(prefs: SharedPreferences, key: String, hint: String, multiline: Boolean = false): EditText = EditText(this).apply {
+    private fun input(prefs: SharedPreferences, key: String, hint: String, multiline: Boolean = false, secret: Boolean = false): EditText = EditText(this).apply {
         setText(prefs.getString(key, ""))
         this.hint = hint
         setHintTextColor(0xFF4A4F5C.toInt())
@@ -220,6 +218,10 @@ class SettingsActivity : AppCompatActivity() {
             minLines = 3
             gravity = Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        } else if (secret) {
+            // 密码遮罩: 粘进去即显示圆点, 可点眼睛临时明文
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
         } else {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }

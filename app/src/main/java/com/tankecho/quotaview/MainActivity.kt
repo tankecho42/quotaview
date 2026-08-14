@@ -154,8 +154,13 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(12), dp(10))
         }
+        headerRow.addView(android.widget.ImageView(this).apply {
+            setImageResource(if (st.id == "codex") R.drawable.ic_openai else R.drawable.ic_zai)
+            setColorFilter(0xFFE6E8EE.toInt(), android.graphics.PorterDuff.Mode.SRC_ATOP)
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(10) }
+        })
         headerRow.addView(TextView(this).apply {
-            text = when (st.id) { "codex" -> "⚡ Codex" else -> "🧩 GLM" }
+            text = if (st.id == "codex") "Codex" else "GLM"
             textSize = 18f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
         })
         // 套餐胶囊标签
