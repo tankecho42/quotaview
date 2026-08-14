@@ -171,19 +171,11 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) }
             })
         }
-        val gear = TextView(this).apply {
-            text = "⚙️"; textSize = 16f
-            setPadding(dp(10), dp(2), dp(10), dp(2))
-            setOnClickListener {
-                startActivity(android.content.Intent(this@MainActivity, SettingsActivity::class.java)
-                    .putExtra("focus", st.id))
-            }
-        }
         val chevron = TextView(this).apply {
             text = "▾"; textSize = 16f; setTextColor(0xFF8A8F9E.toInt())
             setPadding(dp(4), dp(2), dp(8), dp(2))
         }
-        headerRow.addView(gear); headerRow.addView(chevron)
+        headerRow.addView(chevron)
         headerRow.setOnClickListener {
             if (collapsed.contains(st.id)) {
                 collapsed.remove(st.id); body.visibility = View.VISIBLE; chevron.text = "▾"
@@ -209,15 +201,16 @@ class MainActivity : AppCompatActivity() {
             }
             body.addView(race, vlp(top = 6, bottom = 4, height = dp(26)))
 
-            val paceTxt = win.pace?.let { p -> "PACE %.2f".format(p) } ?: "—"
+            // 圆点颜色仍按 PACE 内部计算, 数值不展示
             val statusDot = if (win.pace != null) "●" else "○"
             val dotColor = win.pace?.let { p -> when {
                 p > 1.5f -> 0xFFE5484D.toInt()   // 红
                 p > 1f -> 0xFFF5A524.toInt()     // 黄
                 else -> 0xFF3DD68C.toInt()       // 绿
             } } ?: 0xFF5A5F6E.toInt()
+            val timeTxt = if (win.timeElapsedPercent > 0) "${win.timeElapsedPercent}%" else "—"
             val resetTxt = if (win.resetAt > 0) "${fmtReset.format(Date(win.resetAt * 1000))} 回血" else ""
-            val line = "$statusDot $paceTxt  ·  ${win.usedPercent}% 已用 · $resetTxt"
+            val line = "$statusDot 用量 ${win.usedPercent}% · 已过 $timeTxt · $resetTxt"
             val span = android.text.SpannableString(line)
             span.setSpan(android.text.style.ForegroundColorSpan(dotColor), 0, 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             span.setSpan(android.text.style.RelativeSizeSpan(0.8f), 0, 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
