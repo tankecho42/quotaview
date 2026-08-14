@@ -195,14 +195,14 @@ class SettingsActivity : AppCompatActivity() {
         card.addView(titleRow)
         islandSwitch.setOnCheckedChangeListener { _, checked ->
             if (checked) {
-                if (!android.provider.Settings.canDrawOverlays(this)) {
-                    Toast.makeText(this, "请先授予「显示在 other 应用上层」权限", Toast.LENGTH_LONG).show()
-                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")))
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
                     islandSwitch.isChecked = false
+                    Toast.makeText(this, "请先允许通知权限", Toast.LENGTH_LONG).show()
                 } else {
                     ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java))
-                    Toast.makeText(this, "灵动岛已启动 · 下拉通知栏可隐藏常驻通知", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "灵动岛已启动 · 通知/流体云形态", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 stopService(Intent(this, IslandService::class.java))

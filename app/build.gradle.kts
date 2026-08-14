@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.tankecho.quotaview"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.tankecho.quotaview"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 11
-        versionName = "0.7.0"
+        targetSdk = 36
+        versionCode = 12
+        versionName = "0.8.0"
     }
 
     buildTypes {
