@@ -154,13 +154,22 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(12), dp(10))
         }
-        val title = TextView(this).apply {
-            text = when (st.id) {
-                "codex" -> "⚡ Codex · ${st.plan}"
-                else -> "🧩 GLM · ${st.plan}"
-            }
+        headerRow.addView(TextView(this).apply {
+            text = when (st.id) { "codex" -> "⚡ Codex" else -> "🧩 GLM" }
             textSize = 18f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        // 套餐胶囊标签
+        if (st.plan.isNotBlank() && st.plan != "?") {
+            headerRow.addView(TextView(this).apply {
+                text = st.plan
+                textSize = 11f; setTextColor(0xFF8FA3FF.toInt()); letterSpacing = 0.08f
+                setPadding(dp(9), dp(3), dp(9), dp(3))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xFF1F2637.toInt())
+                    cornerRadius = resources.displayMetrics.density * 20
+                }
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) }
+            })
         }
         val gear = TextView(this).apply {
             text = "⚙️"; textSize = 16f
@@ -174,7 +183,7 @@ class MainActivity : AppCompatActivity() {
             text = "▾"; textSize = 16f; setTextColor(0xFF8A8F9E.toInt())
             setPadding(dp(4), dp(2), dp(8), dp(2))
         }
-        headerRow.addView(title); headerRow.addView(gear); headerRow.addView(chevron)
+        headerRow.addView(gear); headerRow.addView(chevron)
         headerRow.setOnClickListener {
             if (collapsed.contains(st.id)) {
                 collapsed.remove(st.id); body.visibility = View.VISIBLE; chevron.text = "▾"
@@ -200,15 +209,24 @@ class MainActivity : AppCompatActivity() {
             }
             body.addView(race, vlp(top = 6, bottom = 4, height = dp(26)))
 
-            val paceTxt = win.pace?.let { p ->
-                when {
-                    p > 1.5f -> "PACE %.2f 🔥".format(p)
-                    p > 1f -> "PACE %.2f ⚠️".format(p)
-                    else -> "PACE %.2f ✅".format(p)
-                }
-            } ?: "—"
+            val paceTxt = win.pace?.let { p -> "PACE %.2f".format(p) } ?: "—"
+            val statusDot = if (win.pace != null) "●" else "○"
+            val dotColor = win.pace?.let { p -> when {
+                p > 1.5f -> 0xFFE5484D.toInt()   // 红
+                p > 1f -> 0xFFF5A524.toInt()     // 黄
+                else -> 0xFF3DD68C.toInt()       // 绿
+            } } ?: 0xFF5A5F6E.toInt()
             val resetTxt = if (win.resetAt > 0) "${fmtReset.format(Date(win.resetAt * 1000))} 回血" else ""
-            body.addView(tv("${win.usedPercent}% 已用 · ${paceTxt} · ${resetTxt}", 13, 0xFFB4B9C6.toInt(), bottom = 12))
+            val line = "$statusDot $paceTxt  ·  ${win.usedPercent}% 已用 · $resetTxt"
+            val span = android.text.SpannableString(line)
+            span.setSpan(android.text.style.ForegroundColorSpan(dotColor), 0, 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            span.setSpan(android.text.style.RelativeSizeSpan(0.8f), 0, 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            body.addView(TextView(this).apply {
+                text = span
+                textSize = 13f
+                setTextColor(0xFFB4B9C6.toInt())
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
+            })
         }
         section.addView(body)
         if (collapsed.contains(st.id)) { body.visibility = View.GONE; chevron.text = "▸" }

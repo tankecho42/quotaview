@@ -4,19 +4,30 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.tankecho.quotaview.data.CodexApi
+import com.tankecho.quotaview.data.GlmApi
+import com.tankecho.quotaview.data.ProviderStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsActivity : AppCompatActivity() {
+
+    private val scope = CoroutineScope(Dispatchers.Main)
+    private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("qv", MODE_PRIVATE)
-        val focus = intent?.getStringExtra("focus")
 
         supportActionBar?.hide()
         val root = LinearLayout(this).apply {
@@ -25,7 +36,7 @@ class SettingsActivity : AppCompatActivity() {
             setBackgroundColor(0xFF101218.toInt())
         }
 
-        // ---------- header ----------
+        // header
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -36,52 +47,133 @@ class SettingsActivity : AppCompatActivity() {
             setOnClickListener { finish() }
         })
         header.addView(TextView(this).apply {
-            text = "Settings"
-            textSize = 22f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+            text = "Settings"; textSize = 22f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
         })
         root.addView(header)
+        root.addView(sectionLabel("PROVIDERS"))
 
-        // ---------- 显示开关 ----------
-        root.addView(sectionLabel("DISPLAY"))
-        displaySwitch(root, prefs, "show_codex", "⚡ Codex", "ChatGPT Plan · wham/usage")
-        displaySwitch(root, prefs, "show_glm", "🧩 GLM Coding Plan", "bigmodel · quota/limit")
+        root.addView(providerCard(prefs, "codex", "⚡ Codex", "ChatGPT Plan · wham/usage",
+            listOf(
+                FieldDef("codex_token", "access_token", "~/.codex/auth.json → tokens.access_token"),
+                FieldDef("codex_account", "account_id", "auth.json → tokens.account_id"),
+            )) { CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty()) })
 
-        // ---------- Codex ----------
-        val codexSec = section("⚡ Codex", "ChatGPT OAuth · 直连 chatgpt.com")
-        if (focus == "codex") codexSec.setBackgroundColor(0xFF1D2130.toInt())
-        codexSec.addView(fieldLabel("access_token"))
-        codexSec.addView(input(prefs, "codex_token", "粘贴 ~/.codex/auth.json → tokens.access_token"))
-        codexSec.addView(fieldLabel("account_id"))
-        codexSec.addView(input(prefs, "codex_account", "auth.json → tokens.account_id"))
-        root.addView(codexSec)
+        root.addView(providerCard(prefs, "glm", "🧩 GLM Coding Plan", "bigmodel · quota/limit",
+            listOf(
+                FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key"),
+            )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
 
-        // ---------- GLM ----------
-        val glmSec = section("🧩 GLM Coding Plan", "bigmodel API key · 直连 open.bigmodel.cn")
-        if (focus == "glm") glmSec.setBackgroundColor(0xFF1D2130.toInt())
-        glmSec.addView(fieldLabel("API key"))
-        glmSec.addView(input(prefs, "glm_key", "粘贴 bigmodel 的 API key"))
-        root.addView(glmSec)
-
-        // ---------- 费用模拟数据 ----------
+        // 费用模拟
+        root.addView(sectionLabel("COST"))
         val costSec = section("💰 费用模拟", "本地 token 明细 → 等量 API 成本")
         costSec.addView(fieldLabel("明细 JSON"))
         costSec.addView(input(prefs, "cost_breakdown_json", "粘贴采集器 collect_tokens.py 的输出", multiline = true))
         root.addView(costSec)
 
-        // ---------- footer ----------
         root.addView(TextView(this).apply {
             text = "凭证只存本机 SharedPreferences。\nCodex → chatgpt.com · GLM → open.bigmodel.cn\n不经任何第三方服务器。"
             textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) }
         })
 
-        setContentView(ScrollView(this).apply {
-            addView(root)
-            isScrollbarFadingEnabled = false
-        })
+        setContentView(ScrollView(this).apply { addView(root) })
     }
 
-    // ---------- 组件 ----------
+    // ---------- provider 卡片: 开关 + 内嵌配置 + 打开即验证 ----------
+
+    private fun providerCard(
+        prefs: SharedPreferences, id: String, title: String, subtitle: String,
+        fields: List<FieldDef>, validator: () -> ProviderStatus,
+    ): LinearLayout {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(13), dp(16), dp(14))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF181B22.toInt())
+                cornerRadius = resources.displayMetrics.density * 14
+                setStroke(dp(1), 0xFF262A33.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        }
+
+        val hasConfig = fields.any { !prefs.getString(it.key, "").isNullOrBlank() }
+
+        // header row: 标题列 + chevron + switch
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val titleCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        titleCol.addView(TextView(this).apply {
+            this.text = title; textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+        })
+        titleCol.addView(TextView(this).apply {
+            this.text = subtitle; textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
+        })
+        val chevron = TextView(this).apply {
+            text = if (hasConfig) "▾" else "▾"; textSize = 15f; setTextColor(0xFF8A8F9E.toInt())
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+        }
+        val sw = Switch(this).apply {
+            isChecked = prefs.getBoolean("show_$id", true)
+        }
+        headerRow.addView(titleCol)
+        headerRow.addView(chevron)
+        headerRow.addView(sw)
+        card.addView(headerRow)
+
+        // body: 配置项内嵌
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+        }
+        fields.forEach { f ->
+            body.addView(fieldLabel(f.label))
+            body.addView(input(prefs, f.key, f.hint, f.multiline))
+        }
+        card.addView(body)
+        if (!hasConfig) body.visibility = View.GONE else chevron.text = "▾"
+
+        headerRow.setOnClickListener {
+            body.visibility = if (body.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            chevron.text = if (body.visibility == View.VISIBLE) "▾" else "▸"
+        }
+
+        // 打开即验证: 通过才保持开, 失败强制关闭
+        sw.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                val missing = fields.any { prefs.getString(it.key, "").isNullOrBlank() }
+                if (missing) {
+                    sw.isChecked = false
+                    Toast.makeText(this, "$title 还没填完整配置", Toast.LENGTH_SHORT).show()
+                    body.visibility = View.VISIBLE; chevron.text = "▾"
+                    return@setOnCheckedChangeListener
+                }
+                scope.launch {
+                    val st = withContext(Dispatchers.IO) { runCatching(validator).getOrNull() }
+                    val ok = st != null && st.error == null && st.windows.isNotEmpty()
+                    if (ok) {
+                        prefs.edit().putBoolean("show_$id", true).apply()
+                        Toast.makeText(this@SettingsActivity, "$title 连通 ✓ ${st!!.windows.size} 个窗口", Toast.LENGTH_SHORT).show()
+                    } else {
+                        sw.isChecked = false
+                        prefs.edit().putBoolean("show_$id", false).apply()
+                        val reason = st?.error ?: "网络错误"
+                        Toast.makeText(this@SettingsActivity, "$title 配置无法连通：$reason", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } else {
+                prefs.edit().putBoolean("show_$id", false).apply()
+            }
+        }
+        return card
+    }
+
+    // ---------- 通用组件 ----------
 
     private fun sectionLabel(text: String): TextView = TextView(this).apply {
         this.text = text
@@ -102,12 +194,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
         addView(TextView(this@SettingsActivity).apply {
-            this.text = title
-            textSize = 17f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+            this.text = title; textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
         })
         addView(TextView(this@SettingsActivity).apply {
-            this.text = subtitle
-            textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
+            this.text = subtitle; textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
     }
@@ -138,35 +228,6 @@ class SettingsActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
-    }
-
-    private fun displaySwitch(parent: LinearLayout, prefs: SharedPreferences, key: String, title: String, subtitle: String) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(13), dp(12), dp(13))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFF181B22.toInt())
-                cornerRadius = resources.displayMetrics.density * 14
-                setStroke(dp(1), 0xFF262A33.toInt())
-            }
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
-        }
-        val textCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        textCol.addView(TextView(this).apply {
-            text = title; textSize = 15f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        })
-        textCol.addView(TextView(this).apply {
-            text = subtitle; textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        })
-        row.addView(textCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(Switch(this).apply {
-            isChecked = prefs.getBoolean(key, true)
-            setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean(key, checked).apply() }
-        })
-        parent.addView(row)
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
