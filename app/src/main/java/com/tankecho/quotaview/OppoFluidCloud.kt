@@ -69,6 +69,7 @@ object OppoFluidCloud {
                 }
             } catch (_: Exception) {}
         var okResult: JSONObject? = null
+        val errors = JSONObject()
         authorities.distinct().forEach { authority ->
             if (okResult != null) return@forEach
             try {
@@ -81,13 +82,17 @@ object OppoFluidCloud {
                         val jo = JSONObject(raw)
                         jo.put("authority", authority)
                         okResult = jo
+                    } else {
+                        errors.put(authority.takeLast(30), "空返回")
                     }
+                } else {
+                    errors.put(authority.takeLast(30), "client=null")
                 }
             } catch (e: Exception) {
-                android.util.Log.w("QVIsland", "authority $authority failed: ${e.message}")
+                errors.put(authority.takeLast(30), (e.message ?: e.javaClass.simpleName).take(80))
             }
         }
-        okResult ?: JSONObject().put("code", -1).put("message", "所有authority均失败: ${authorities.joinToString().take(100)}")
+        okResult ?: JSONObject().put("code", -1).put("errors", errors)
         } catch (e: Exception) {
             JSONObject().put("code", -3).put("message", e.message ?: e.javaClass.simpleName)
         }
