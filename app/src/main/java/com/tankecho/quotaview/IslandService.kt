@@ -78,6 +78,7 @@ class IslandService : Service() {
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setFlag(Notification.FLAG_ONGOING_EVENT, true)
+            .setColorized(true)
             .setContentIntent(
                 android.app.PendingIntent.getActivity(
                     this, 0,
@@ -96,7 +97,7 @@ class IslandService : Service() {
         builder.setContentText("${win.label} · 用量 ${usedPct}% · 已过 ${timePct}%")
 
         if (android.os.Build.VERSION.SDK_INT >= 36) {
-            // Android 16+: ProgressStyle → ColorOS 流体云 / 原生 Live Update
+            // Android 16 Live Updates → ColorOS 流体云提升
             val style = Notification.ProgressStyle()
                 .setProgress(usedPct)
                 .setProgressSegments(listOf(
@@ -108,6 +109,8 @@ class IslandService : Service() {
                 ))
                 .setStyledByProgress(true)
             builder.setStyle(style)
+            // 显式请求 promoted ongoing (官方文档要求; key 值来自官方文档)
+            builder.extras.putBoolean("android.requestPromotedOngoing", true)
         }
         return builder.build()
     }
