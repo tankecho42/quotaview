@@ -1,6 +1,8 @@
 package com.tankecho.quotaview
 
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -12,6 +14,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.forEachIndexed
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.GlmApi
@@ -180,11 +183,31 @@ class SettingsActivity : AppCompatActivity() {
         val card = section("", "")
         card.removeAllViews()
 
-        // 标题行
-        card.addView(TextView(this).apply {
+        // 标题行 + 总开关
+        val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        titleRow.addView(TextView(this).apply {
             text = "💍 灵动岛展示"
             textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
+        val islandSwitch = Switch(this).apply { isChecked = false }
+        titleRow.addView(islandSwitch)
+        card.addView(titleRow)
+        islandSwitch.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                if (!android.provider.Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "请先授予「显示在 other 应用上层」权限", Toast.LENGTH_LONG).show()
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")))
+                    islandSwitch.isChecked = false
+                } else {
+                    ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java))
+                    Toast.makeText(this, "灵动岛已启动 · 下拉通知栏可隐藏常驻通知", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                stopService(Intent(this, IslandService::class.java))
+            }
+        }
 
         // 预览环
         ringPreview = com.tankecho.quotaview.ui.DualRingView(this).apply {
