@@ -190,21 +190,34 @@ class SettingsActivity : AppCompatActivity() {
             textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        val islandSwitch = Switch(this).apply { isChecked = false }
+        val islandSwitch = Switch(this).apply {
+            isChecked = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_enabled", false)
+        }
         titleRow.addView(islandSwitch)
         card.addView(titleRow)
         islandSwitch.setOnCheckedChangeListener { _, checked ->
+            val prefs = getSharedPreferences("qv", MODE_PRIVATE)
             if (checked) {
                 if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
                     islandSwitch.isChecked = false
                     Toast.makeText(this, "请先允许通知权限", Toast.LENGTH_LONG).show()
+                } else if (android.os.Build.VERSION.SDK_INT >= 36 &&
+                    !(getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                        .canPostPromotedNotifications()) {
+                    // 流体云/实时活动授权未开 → 引导去系统设置
+                    prefs.edit().putBoolean("island_enabled", true).apply()
+                    Toast.makeText(this, "请开启「实时活动/流体云」权限后回来重开开关", Toast.LENGTH_LONG).show()
+                    startActivity(Intent("android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS",
+                        Uri.parse("package:$packageName")))
                 } else {
+                    prefs.edit().putBoolean("island_enabled", true).apply()
                     ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java))
-                    Toast.makeText(this, "灵动岛已启动 · 通知/流体云形态", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "灵动岛已启动", Toast.LENGTH_SHORT).show()
                 }
             } else {
+                prefs.edit().putBoolean("island_enabled", false).apply()
                 stopService(Intent(this, IslandService::class.java))
             }
         }

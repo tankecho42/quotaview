@@ -15,6 +15,8 @@ import com.tankecho.quotaview.data.CostSimulator
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import com.tankecho.quotaview.ui.RaceBars
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +38,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         prefs = getSharedPreferences("qv", MODE_PRIVATE)
+
+        // 灵动岛: 按持久化开关恢复服务
+        if (prefs.getBoolean("island_enabled", false)) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java)) }
+        }
 
         swipe = SwipeRefreshLayout(this)
         root = LinearLayout(this).apply {
