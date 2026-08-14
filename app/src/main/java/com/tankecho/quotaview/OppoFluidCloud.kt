@@ -53,12 +53,41 @@ object OppoFluidCloud {
         }
 
         val result = try {
-            val client = context.contentResolver.acquireUnstableContentProviderClient("IntelligentIntent")
-                ?: return JSONObject().put("code", -1).put("message", "IntelligentIntent provider 不存在(非ColorOS或已禁用)")
-            val bundle = client.call("shareIntent", null, Bundle().apply { putString("intentData", data.toString()) })
-            client.close()
-            val raw = bundle?.getString("result")
-            raw?.let { JSONObject(it) } ?: JSONObject().put("code", -2).put("message", "空返回")
+            // 依次尝试: 文档简写 authority → 枚举系统 provider 匹配 intent 关键词
+            val authorities = mutableListOf("IntelligentIntent")
+            try {
+                val pm = context.packageManager
+                @Suppress("DEPRECATION")
+                val providers = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PROVIDERS)
+                providers.forEach { pi ->
+                    pi.providers?.forEach { pr ->
+                        val a = pr.authority ?: return@forEach
+                        if (a.contains("ntelligent", true) || a.contains("fluid", true) || a.contains("intent", true) && a.contains("oplus", true)) {
+                            authorities.add(a)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        var okResult: JSONObject? = null
+        authorities.distinct().forEach { authority ->
+            if (okResult != null) return@forEach
+            try {
+                val client = context.contentResolver.acquireUnstableContentProviderClient(authority)
+                if (client != null) {
+                    val bundle = client.call("shareIntent", null, Bundle().apply { putString("intentData", data.toString()) })
+                    client.close()
+                    val raw = bundle?.getString("result")
+                    if (raw != null) {
+                        val jo = JSONObject(raw)
+                        jo.put("authority", authority)
+                        okResult = jo
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("QVIsland", "authority $authority failed: ${e.message}")
+            }
+        }
+        okResult ?: JSONObject().put("code", -1).put("message", "所有authority均失败: ${authorities.joinToString().take(100)}")
         } catch (e: Exception) {
             JSONObject().put("code", -3).put("message", e.message ?: e.javaClass.simpleName)
         }
