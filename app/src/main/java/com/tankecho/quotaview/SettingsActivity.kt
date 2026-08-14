@@ -199,23 +199,20 @@ class SettingsActivity : AppCompatActivity() {
         islandSwitch.setOnCheckedChangeListener { _, checked ->
             val prefs = getSharedPreferences("qv", MODE_PRIVATE)
             if (checked) {
-                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                if (!android.provider.Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "请先允许「显示在其他应用上层」权限", Toast.LENGTH_LONG).show()
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")))
+                    islandSwitch.isChecked = false
+                } else if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
                     islandSwitch.isChecked = false
                     Toast.makeText(this, "请先允许通知权限", Toast.LENGTH_LONG).show()
-                } else if (android.os.Build.VERSION.SDK_INT >= 36 &&
-                    !(getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager)
-                        .canPostPromotedNotifications()) {
-                    // 流体云/实时活动授权未开 → 引导去系统设置
-                    prefs.edit().putBoolean("island_enabled", true).apply()
-                    Toast.makeText(this, "请开启「实时活动/流体云」权限后回来重开开关", Toast.LENGTH_LONG).show()
-                    startActivity(Intent("android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS",
-                        Uri.parse("package:$packageName")))
                 } else {
                     prefs.edit().putBoolean("island_enabled", true).apply()
                     ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java))
-                    Toast.makeText(this, "灵动岛已启动", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "悬浮圆环已启动", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 prefs.edit().putBoolean("island_enabled", false).apply()
