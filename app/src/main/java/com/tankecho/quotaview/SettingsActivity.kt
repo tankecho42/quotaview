@@ -12,6 +12,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.forEachIndexed
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.ProviderStatus
@@ -23,6 +24,7 @@ import kotlinx.coroutines.withContext
 class SettingsActivity : AppCompatActivity() {
 
     private val scope = CoroutineScope(Dispatchers.Main)
+    private lateinit var ringPreview: com.tankecho.quotaview.ui.DualRingView
     private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false, val secret: Boolean = false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,6 +64,10 @@ class SettingsActivity : AppCompatActivity() {
             listOf(
                 FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key", secret = true),
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
+
+        // ---------- 灵动岛配置 ----------
+        root.addView(sectionLabel("LIVE RING · 灵动岛"))
+        root.addView(liveRingCard(prefs))
 
         root.addView(footer(prefs))
 
@@ -166,7 +172,147 @@ class SettingsActivity : AppCompatActivity() {
         return card
     }
 
-    // ---------- 通用组件 ----------
+    // ---------- 灵动岛配置卡片 ----------
+
+    private val windowOptions = listOf("主窗口" to "primary", "周窗口" to "week", "MCP 工具" to "mcp")
+
+    private fun liveRingCard(prefs: SharedPreferences): LinearLayout {
+        val card = section("", "")
+        card.removeAllViews()
+
+        // 标题行
+        card.addView(TextView(this).apply {
+            text = "💍 灵动岛展示"
+            textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+        })
+
+        // 预览环
+        ringPreview = com.tankecho.quotaview.ui.DualRingView(this).apply {
+            iconRes = if (prefs.getString("ring_provider", "codex") == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+        }
+        val previewWrap = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        }
+        previewWrap.addView(ringPreview, LinearLayout.LayoutParams(dp(120), dp(120)).apply { rightMargin = dp(20) })
+        val legend = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        legend.addView(TextView(this).apply {
+            text = "外环 · 额度用量"; textSize = 13f; setTextColor(0xFF8FA3FF.toInt()); paint.isFakeBoldText = true
+        })
+        legend.addView(TextView(this).apply {
+            text = "内环 · 时间进度"; textSize = 13f; setTextColor(0xFF9BA1B0.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        })
+        legend.addView(TextView(this).apply {
+            text = "开屏即见, 无需打开 App"
+            textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        })
+        previewWrap.addView(legend)
+        card.addView(previewWrap, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12); bottomMargin = dp(4)
+        })
+
+        // Provider 选择
+        card.addView(fieldLabel("Provider"))
+        val provRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("Codex" to "codex", "GLM" to "glm").forEach { (_, id) ->
+            provRow.addView(makeChip("", false) { })
+        }
+        updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), prefs.getString("ring_provider", "codex")!!)
+        provRow.forEachIndexed { i, v ->
+            if (v is TextView) {
+                val id = listOf("codex", "glm")[i]
+                v.setOnClickListener {
+                    prefs.edit().putString("ring_provider", id).apply()
+                    ringPreview.iconRes = if (id == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+                    updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), id)
+                    refreshRingPreview(prefs)
+                }
+            }
+        }
+        card.addView(provRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+
+        // 窗口类型
+        card.addView(fieldLabel("额度类型"))
+        val winRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        windowOptions.forEach { (name, _) ->
+            winRow.addView(makeChip(name, false) { })
+        }
+        card.addView(winRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+
+        // 初始化选中态 + 实时预览
+        updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), prefs.getString("ring_provider", "codex")!!)
+        val savedWin = prefs.getString("ring_window", "primary") ?: "primary"
+        updateChipStates(winRow, windowOptions.map { it.first to it.second }, savedWin)
+        winRow.forEachIndexed { i, v ->
+            if (v is TextView) {
+                val (name, key) = windowOptions[i]
+                v.setOnClickListener {
+                    prefs.edit().putString("ring_window", key).apply()
+                    updateChipStates(winRow, windowOptions.map { it.first to it.second }, key)
+                    refreshRingPreview(prefs)
+                }
+            }
+        }
+        refreshRingPreview(prefs)
+        return card
+    }
+
+    private fun refreshRingPreview(prefs: SharedPreferences) {
+        scope.launch {
+            val st = withContext(Dispatchers.IO) {
+                val prov = prefs.getString("ring_provider", "codex")!!
+                runCatching {
+                    if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
+                    else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+                }.getOrNull()
+            }
+            val winKey = prefs.getString("ring_window", "primary") ?: "primary"
+            val win = st?.windows?.firstOrNull { labelToKey(it.label) == winKey } ?: st?.windows?.firstOrNull()
+            ringPreview.usedPercent = win?.usedPercent?.toFloat() ?: 0f
+            ringPreview.timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
+            ringPreview.ringColor = when {
+                win == null || win.pace == null -> 0xFF6E8BFF.toInt()
+                win.pace!! > 1.5f -> 0xFFE5484D.toInt()
+                win.pace!! > 1f -> 0xFFF5A524.toInt()
+                else -> 0xFF6E8BFF.toInt()
+            }
+            ringPreview.invalidate()
+        }
+    }
+
+    private fun labelToKey(label: String): String = when {
+        label.startsWith("MCP") -> "mcp"
+        label.contains("周") -> "week"
+        else -> "primary"
+    }
+
+    private fun makeChip(text: String, selected: Boolean, onClick: (Boolean) -> Unit): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        setPadding(dp(14), dp(7), dp(14), dp(7))
+        gravity = Gravity.CENTER
+        background = android.graphics.drawable.GradientDrawable().apply {
+            color = android.content.res.ColorStateList.valueOf(if (selected) 0xFF6E8BFF.toInt() else 0xFF262A33.toInt())
+            cornerRadius = resources.displayMetrics.density * 20
+        }
+        setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF8A8F9E.toInt())
+        setOnClickListener { onClick(!selected) }
+    }
+
+    private fun updateChipStates(row: LinearLayout, options: List<Pair<String, String>>, activeKey: String) {
+        row.forEachIndexed { i, v ->
+            if (v is TextView) {
+                val key = options.getOrNull(i)?.second ?: return@forEachIndexed
+                val sel = key == activeKey
+                v.background = android.graphics.drawable.GradientDrawable().apply {
+                    color = android.content.res.ColorStateList.valueOf(if (sel) 0xFF6E8BFF.toInt() else 0xFF262A33.toInt())
+                    cornerRadius = resources.displayMetrics.density * 20
+                }
+                v.setTextColor(if (sel) 0xFFFFFFFF.toInt() else 0xFF8A8F9E.toInt())
+            }
+        }
+    }
 
     private fun sectionLabel(text: String): TextView = TextView(this).apply {
         this.text = text
@@ -242,10 +388,18 @@ class SettingsActivity : AppCompatActivity() {
             textSize = 12f; setTextColor(0xFF5A5F6E.toInt()); gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
         })
-        addView(TextView(this@SettingsActivity).apply {
-            text = "github.com/tankecho42/quotaview"
-            textSize = 12f; setTextColor(0xFF6E8BFF.toInt()); gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+        addView(LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+            addView(android.widget.ImageView(this@SettingsActivity).apply {
+                setImageResource(R.drawable.ic_github)
+                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { rightMargin = dp(5); topMargin = dp(1) }
+            })
+            addView(TextView(this@SettingsActivity).apply {
+                text = "github.com/tankecho42/quotaview"
+                textSize = 12f; setTextColor(0xFF6E8BFF.toInt())
+            })
         })
     }
 
