@@ -59,7 +59,7 @@ class IslandService : Service() {
 
     private fun startForegroundLiveUpdate() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val ch = NotificationChannel(CHANNEL_ID, "灵动岛", NotificationManager.IMPORTANCE_LOW)
+        val ch = NotificationChannel(CHANNEL_ID, "灵动岛", NotificationManager.IMPORTANCE_HIGH)
         ch.setShowBadge(false)
         nm.createNotificationChannel(ch)
         // 先占位, 数据到达后更新为 ProgressStyle

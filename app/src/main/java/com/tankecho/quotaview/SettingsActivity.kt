@@ -324,6 +324,7 @@ class SettingsActivity : AppCompatActivity() {
         val promoted = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promoted", false)
         val diagTs = getSharedPreferences("qv", MODE_PRIVATE).getLong("island_diag_ts", 0)
         sb.append("\npromoted(readback)=").append(promoted)
+        sb.append("\npromotable(readback)=").append(getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promotable", false))
         if (diagTs > 0) sb.append("\nreadback时间=").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(diagTs)))
         sb.append("\nlistener授权=").append(android.provider.Settings.Secure.getString(
             contentResolver, "enabled_notification_listeners")?.contains(packageName) == true)

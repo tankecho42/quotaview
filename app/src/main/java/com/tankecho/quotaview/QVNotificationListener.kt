@@ -24,11 +24,13 @@ class QVNotificationListener : NotificationListenerService() {
         val n = sbn.notification
         val promoted = n.flags and android.app.Notification.FLAG_PROMOTED_ONGOING != 0
         val ongoing = n.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0
+        val promotable = runCatching { n.hasPromotableCharacteristics() }.getOrDefault(false)
         getSharedPreferences("qv", MODE_PRIVATE).edit()
             .putBoolean("island_promoted", promoted)
+            .putBoolean("island_promotable", promotable)
             .putBoolean("island_ongoing_readback", ongoing)
             .putLong("island_diag_ts", System.currentTimeMillis())
             .apply()
-        android.util.Log.i("QVIsland", "readback: promoted=$promoted ongoing=$ongoing flags=${Integer.toBinaryString(n.flags)}")
+        android.util.Log.i("QVIsland", "readback: promoted=$promoted promotable=$promotable ongoing=$ongoing flags=${Integer.toBinaryString(n.flags)}")
     }
 }
