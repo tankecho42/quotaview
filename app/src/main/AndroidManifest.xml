@@ -5,6 +5,7 @@
 
     <application
         android:label="QuotaView"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.QuotaView"
         android:allowBackup="false"
         android:supportsRtl="true">

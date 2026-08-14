@@ -63,11 +63,7 @@ class SettingsActivity : AppCompatActivity() {
                 FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key", secret = true),
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
 
-        root.addView(TextView(this).apply {
-            text = "凭证只存本机 SharedPreferences。\nCodex → chatgpt.com · GLM → open.bigmodel.cn\n不经任何第三方服务器。"
-            textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) }
-        })
+        root.addView(footer(prefs))
 
         setContentView(ScrollView(this).apply { addView(root) })
     }
@@ -228,6 +224,28 @@ class SettingsActivity : AppCompatActivity() {
             override fun afterTextChanged(s: android.text.Editable?) { prefs.edit().putString(key, s?.toString().orEmpty()).apply() }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+    }
+
+    private fun footer(prefs: SharedPreferences): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) }
+
+        val version = BuildConfig.VERSION_NAME
+        addView(TextView(this@SettingsActivity).apply {
+            text = "QuotaView v$version"
+            textSize = 13f; setTextColor(0xFF8A8F9E.toInt()); paint.isFakeBoldText = true
+        })
+        addView(TextView(this@SettingsActivity).apply {
+            text = "© 2026 Tank × TankEcho\n从订阅套餐的额度里，看清每一分钱的去向"
+            textSize = 12f; setTextColor(0xFF5A5F6E.toInt()); gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
+        })
+        addView(TextView(this@SettingsActivity).apply {
+            text = "github.com/tankecho42/quotaview"
+            textSize = 12f; setTextColor(0xFF6E8BFF.toInt()); gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
         })
     }
 
