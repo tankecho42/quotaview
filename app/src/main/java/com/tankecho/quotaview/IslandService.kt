@@ -365,10 +365,28 @@ class IslandService : Service() {
         builder.setStyle(style)
         builder.extras.putBoolean("android.requestPromotedOngoing", true)
 
-        nm.notify(LIVE_NOTI_ID, builder.build())
-        // 诊断: 提升条件真值
-        val n = builder.build()
-        android.util.Log.i("QVIsland", "live-noti: hasPromotableCharacteristics=${n.hasPromotableCharacteristics()} colorizedRequested=${n.extras.getBoolean("android.colorized")} ongoing=${n.flags and Notification.FLAG_ONGOING_EVENT != 0}")
+        val built = builder.build()
+        nm.notify(LIVE_NOTI_ID, built)
+
+        // post-time 自检: 逐项记录特征真值 (诊断页显示, 无需 logcat)
+        if (android.os.Build.VERSION.SDK_INT >= 36) {
+            val ok = runCatching { built.hasPromotableCharacteristics() }.getOrDefault(false)
+            val styleOk = built.extras.containsKey("android.progressSegments") ||
+                builder.javaClass.getDeclaredField("mStyle").let { it.isAccessible = true; (it.get(builder) as? Notification.ProgressStyle) != null }
+            val colorOk = built.extras.getBoolean("android.colorized")
+            val ongoingOk = built.flags and Notification.FLAG_ONGOING_EVENT != 0
+            val titleOk = built.extras.getCharSequence(Notification.EXTRA_TITLE) != null
+            val customViewsOk = built.contentView != null || built.bigContentView != null
+            getSharedPreferences("qv", MODE_PRIVATE).edit()
+                .putBoolean("island_selfcheck_ok", ok)
+                .putBoolean("island_selfcheck_style", styleOk)
+                .putBoolean("island_selfcheck_color", colorOk)
+                .putBoolean("island_selfcheck_ongoing", ongoingOk)
+                .putBoolean("island_selfcheck_title", titleOk)
+                .putBoolean("island_selfcheck_nocustom", !customViewsOk)
+                .apply()
+            android.util.Log.i("QVIsland", "selfcheck: overall=$ok style=$styleOk color=$colorOk ongoing=$ongoingOk title=$titleOk customViews=${customViewsOk}")
+        }
     }
 
     companion object {

@@ -343,6 +343,11 @@ class SettingsActivity : AppCompatActivity() {
         sb.append("\n② hasPromotableCharacteristics(readback)=").append(if (c2) "PASS" else "FAIL")
         sb.append("\n③ channel importance>MIN=").append("PASS(importance=3)")
         sb.append("\n④ FLAG_PROMOTED_ONGOING(系统盖章)=").append(if (c3) "PASS ✅已提升" else "FAIL")
+        sb.append("\n⑤ post自检 style=").append(if (vprefs.getBoolean("island_selfcheck_style", false)) "PASS" else "FAIL")
+        sb.append(" colorized=").append(if (vprefs.getBoolean("island_selfcheck_color", false)) "PASS" else "FAIL")
+        sb.append(" ongoing=").append(if (vprefs.getBoolean("island_selfcheck_ongoing", false)) "PASS" else "FAIL")
+        sb.append(" title=").append(if (vprefs.getBoolean("island_selfcheck_title", false)) "PASS" else "FAIL")
+        sb.append(" noCustomViews=").append(if (vprefs.getBoolean("island_selfcheck_nocustom", false)) "PASS" else "FAIL")
         sb.append("\n结论: ")
         sb.append(when {
             c3 -> "系统已提升! 若无岛, 是 ColorOS 渲染层选择不显示"
