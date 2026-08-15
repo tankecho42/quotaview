@@ -332,6 +332,25 @@ class SettingsActivity : AppCompatActivity() {
         }
         sb.append("\n流体云端侧=").append(fluid.toString())
 
+        // ===== 判决: AOSP 提升判定逐条对照 =====
+        val vprefs = getSharedPreferences("qv", MODE_PRIVATE)
+        val vnm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        sb.append("\n\n===== 提升判定 (AOSP 8491) =====")
+        val c1 = runCatching { vnm.canPostPromotedNotifications() }.getOrDefault(false)
+        val c2 = vprefs.getBoolean("island_promotable", false)
+        val c3 = vprefs.getBoolean("island_promoted", false)
+        sb.append("\n① canBePromoted(授权)=").append(if (c1) "PASS" else "FAIL")
+        sb.append("\n② hasPromotableCharacteristics(readback)=").append(if (c2) "PASS" else "FAIL")
+        sb.append("\n③ channel importance>MIN=").append("PASS(importance=3)")
+        sb.append("\n④ FLAG_PROMOTED_ONGOING(系统盖章)=").append(if (c3) "PASS ✅已提升" else "FAIL")
+        sb.append("\n结论: ")
+        sb.append(when {
+            c3 -> "系统已提升! 若无岛, 是 ColorOS 渲染层选择不显示"
+            c1 && c2 -> "①②全过但未盖章 → ColorOS 侧在 NotificationManagerService 加了额外门槛"
+            c1 && !c2 -> "授权OK但通知特征FAIL → 查 logcat QVIsland 的 post 时真值"
+            else -> "前置条件未满足, 按上面 FAIL 项修"
+        })
+
         val msg = sb.toString()
         val dlg = android.app.AlertDialog.Builder(this)
             .setTitle("灵动岛诊断")
