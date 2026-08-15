@@ -64,8 +64,9 @@ class IslandService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf(); return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_REFRESH -> scope.launch { refreshData() }   // 设置页切换 provider/窗口后立即同步
         }
         return START_STICKY
     }
@@ -81,7 +82,7 @@ class IslandService : Service() {
 
     private fun startForegroundQuiet() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val ch = NotificationChannel(CHANNEL_ID, "灵动岛", NotificationManager.IMPORTANCE_LOW)
+        val ch = NotificationChannel(CHANNEL_ID, "灵动岛", NotificationManager.IMPORTANCE_DEFAULT)
         ch.setShowBadge(false); ch.setSound(null, null)
         nm.createNotificationChannel(ch)
         startForeground(NOTI_ID, Notification.Builder(this, CHANNEL_ID)
@@ -93,6 +94,7 @@ class IslandService : Service() {
                 this, 0, Intent(this, MainActivity::class.java),
                 android.app.PendingIntent.FLAG_IMMUTABLE))
             .build())
+        createLiveChannel()
     }
 
     // ---------- 悬浮圆环 ----------
@@ -287,11 +289,19 @@ class IslandService : Service() {
                 if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
                 else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
             }.getOrNull()
-        } ?: run { if (ringView == null && android.provider.Settings.canDrawOverlays(this)) attachRing(); return }
+        } ?: run {
+            // 数据失败: 圆环照常显示占位, Live 通知也发占位 (样式不能裸)
+            if (ringView == null && android.provider.Settings.canDrawOverlays(this)) attachRing()
+            postLiveNotification(null)
+            return
+        }
 
         val winKey = prefs.getString("ring_window", "primary") ?: "primary"
         val win = st.windows.firstOrNull { labelToKey(it.label) == winKey } ?: st.windows.firstOrNull()
         currentWindow = win
+
+        // Live Updates 通知 (Android 16 灵动岛官方路径)
+        postLiveNotification(win)
 
         if (android.provider.Settings.canDrawOverlays(this)) {
             if (ringView == null) attachRing()
@@ -310,10 +320,64 @@ class IslandService : Service() {
         else -> "primary"
     }
 
+    private fun createLiveChannel() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val ch = NotificationChannel(LIVE_CHANNEL_ID, "额度灵动岛", NotificationManager.IMPORTANCE_DEFAULT)
+        ch.setShowBadge(false); ch.setSound(null, null)
+        nm.createNotificationChannel(ch)
+    }
+
+    /** Android 16 Live Updates 通知 (独立于前台服务通知, 可被提升为灵动岛) */
+    private fun postLiveNotification(win: QuotaWindow?) {
+        if (android.os.Build.VERSION.SDK_INT < 36) return
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        val prov = prefs.getString("ring_provider", "codex")!!
+        val provName = if (prov == "codex") "Codex" else "GLM"
+
+        val usedPct = win?.usedPercent?.coerceIn(0, 100) ?: 0
+        val timePct = win?.timeElapsedPercent?.coerceIn(0, 100) ?: 0
+
+        val builder = Notification.Builder(this, LIVE_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("$provName 额度")
+            .setContentText(if (win != null) "${win.label} · 已用 ${usedPct}%" else "加载中…")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setFlag(Notification.FLAG_ONGOING_EVENT, true)
+            .setColorized(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setWhen(win?.resetAt?.times(1000L) ?: System.currentTimeMillis() + 900_000L)
+            .setShortCriticalText(provName)
+            .setContentIntent(android.app.PendingIntent.getActivity(
+                this, 1, Intent(this, MainActivity::class.java),
+                android.app.PendingIntent.FLAG_IMMUTABLE))
+
+        val style = Notification.ProgressStyle()
+            .setProgress(usedPct)
+            .setProgressSegments(listOf(
+                Notification.ProgressStyle.Segment(usedPct),
+                Notification.ProgressStyle.Segment(100 - usedPct)))
+            .setProgressPoints(listOf(Notification.ProgressStyle.Point(timePct)))
+            .setStyledByProgress(true)
+        builder.setStyle(style)
+        builder.extras.putBoolean("android.requestPromotedOngoing", true)
+
+        nm.notify(LIVE_NOTI_ID, builder.build())
+        // 诊断: 提升条件真值
+        val n = builder.build()
+        android.util.Log.i("QVIsland", "live-noti: hasPromotableCharacteristics=${n.hasPromotableCharacteristics()} colorizedRequested=${n.extras.getBoolean("android.colorized")} ongoing=${n.flags and Notification.FLAG_ONGOING_EVENT != 0}")
+    }
+
     companion object {
         const val CHANNEL_ID = "qv_island"
+        const val LIVE_CHANNEL_ID = "qv_live"
         const val NOTI_ID = 1001
+        const val LIVE_NOTI_ID = 1002
         const val ACTION_STOP = "stop"
+        const val ACTION_REFRESH = "refresh"
     }
 }
 

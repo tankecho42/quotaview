@@ -246,23 +246,21 @@ class SettingsActivity : AppCompatActivity() {
             topMargin = dp(12); bottomMargin = dp(4)
         })
 
-        // Provider 选择
+        // Provider 选择 (icon + 名称 的胶囊单选)
         card.addView(fieldLabel("Provider"))
         val provRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Codex" to "codex", "GLM" to "glm").forEach { (_, id) ->
-            provRow.addView(makeChip("", false) { })
-        }
-        updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), prefs.getString("ring_provider", "codex")!!)
-        provRow.forEachIndexed { i, v ->
-            if (v is TextView) {
-                val id = listOf("codex", "glm")[i]
-                v.setOnClickListener {
+        val provList = listOf("Codex" to "codex", "GLM" to "glm")
+        provList.forEach { (name, id) ->
+            provRow.addView(makeProviderChip(name, id == prefs.getString("ring_provider", "codex")) { selected ->
+                if (selected) {
                     prefs.edit().putString("ring_provider", id).apply()
+                    if (prefs.getBoolean("island_enabled", false)) {
+                        startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                    }
                     ringPreview.iconRes = if (id == "codex") R.drawable.ic_openai else R.drawable.ic_zai
-                    updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), id)
                     refreshRingPreview(prefs)
                 }
-            }
+            })
         }
         card.addView(provRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
@@ -275,7 +273,6 @@ class SettingsActivity : AppCompatActivity() {
         card.addView(winRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
         // 初始化选中态 + 实时预览
-        updateChipStates(provRow, listOf("Codex" to "codex", "GLM" to "glm"), prefs.getString("ring_provider", "codex")!!)
         val savedWin = prefs.getString("ring_window", "primary") ?: "primary"
         updateChipStates(winRow, windowOptions.map { it.first to it.second }, savedWin)
         winRow.forEachIndexed { i, v ->
@@ -283,6 +280,9 @@ class SettingsActivity : AppCompatActivity() {
                 val (name, key) = windowOptions[i]
                 v.setOnClickListener {
                     prefs.edit().putString("ring_window", key).apply()
+                if (prefs.getBoolean("island_enabled", false)) {
+                    startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                }
                     updateChipStates(winRow, windowOptions.map { it.first to it.second }, key)
                     refreshRingPreview(prefs)
                 }
@@ -389,6 +389,47 @@ class SettingsActivity : AppCompatActivity() {
         label.contains("周") -> "week"
         else -> "primary"
     }
+
+    /** Provider 胶囊: 官方 icon + 名称, 选中态靛蓝描边 */
+    private fun makeProviderChip(name: String, selected: Boolean, onClick: (Boolean) -> Unit): android.view.View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val pad = dp(12)
+            setPadding(pad, (pad * 0.7f).toInt(), pad, (pad * 0.7f).toInt())
+            val cornerBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat()
+                setColor(if (selected) 0x266E8BFF.toInt() else 0xFF1A1E27.toInt())
+                setStroke(dp(1).toInt(), if (selected) 0xFF6E8BFF.toInt() else 0xFF2A2F3B.toInt())
+            }
+            background = cornerBg
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.rightMargin = dp(8).toInt()
+            layoutParams = lp
+
+            addView(android.widget.ImageView(this@SettingsActivity).apply {
+                setImageResource(if (name == "Codex") R.drawable.ic_openai else R.drawable.ic_zai)
+                layoutParams = LinearLayout.LayoutParams(dp(18).toInt(), dp(18).toInt()).apply { rightMargin = dp(6).toInt() }
+            })
+            addView(TextView(this@SettingsActivity).apply {
+                text = name
+                textSize = 13.5f
+                setTextColor(if (selected) 0xFFE6E8EE.toInt() else 0xFF9BA1B0.toInt())
+                paint.isFakeBoldText = selected
+            })
+            setOnClickListener {
+                // 单选: 重新渲染整行
+                (parent as? LinearLayout)?.let { row ->
+                    val idx = row.indexOfChild(this)
+                    row.removeAllViews()
+                    val provs = listOf("Codex" to "codex", "GLM" to "glm")
+                    provs.forEachIndexed { i, (nm, id) ->
+                        row.addView(makeProviderChip(nm, i == idx) { sel -> if (sel) onClick(true) })
+                    }
+                }
+                onClick(true)
+            }
+        }
 
     private fun makeChip(text: String, selected: Boolean, onClick: (Boolean) -> Unit): TextView = TextView(this).apply {
         this.text = text
