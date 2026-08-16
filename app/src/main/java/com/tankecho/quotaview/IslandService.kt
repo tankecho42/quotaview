@@ -1,6 +1,8 @@
 package com.tankecho.quotaview
 
 import android.animation.ValueAnimator
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -539,14 +541,64 @@ class IslandService : Service() {
         runCatching { wm.addView(card, params) }
         detailView = card
         ringView?.visibility = View.INVISIBLE
+
+        // ===== morph 动画: 从圆环位置/尺寸 → 展开到中央 =====
+        val rp = ringParams
+        if (rp != null) {
+            // 圆环在屏幕上的中心 (mAttrs 坐标)
+            val rcx = rp.x + ringSize / 2f
+            val rcy = rp.y + ringSize / 2f
+            // 卡片最终中心 (屏幕中心)
+            val ccx = screenW / 2f
+            val ccy = screenH / 2f
+            val fromScale = ringSize.toFloat() / cardW
+            card.scaleX = fromScale; card.scaleY = fromScale
+            card.translationX = rcx - ccx
+            card.translationY = rcy - ccy
+            card.alpha = 0.6f
+            card.animate()
+                .scaleX(1f).scaleY(1f)
+                .translationX(0f).translationY(0f)
+                .alpha(1f)
+                .setDuration(260)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+            scrim.alpha = 0f
+            scrim.animate().alpha(1f).setDuration(220).start()
+        }
     }
 
     private fun collapseDetail() {
-        detailView?.let { runCatching { wm.removeView(it) } }
-        detailView = null
-        scrimView?.let { runCatching { wm.removeView(it) } }
-        scrimView = null
-        ringView?.visibility = View.VISIBLE
+        val card = detailView ?: return
+        val rp = ringParams
+        val scrim = scrimView
+        detailView = null; scrimView = null
+        if (rp == null) {
+            runCatching { wm.removeView(card) }
+            scrim?.let { runCatching { wm.removeView(it) } }
+            ringView?.visibility = View.VISIBLE
+            return
+        }
+        // 反向 morph: 卡片 → 圆环位置/尺寸, 结束后移除
+        val rcx = rp.x + ringSize / 2f
+        val rcy = rp.y + ringSize / 2f
+        val ccx = screenW / 2f
+        val ccy = screenH / 2f
+        val cardW2 = (250 * dp).toInt()
+        val toScale = ringSize.toFloat() / cardW2
+        scrim?.animate()?.alpha(0f)?.setDuration(200)?.start()
+        card.animate()
+            .scaleX(toScale).scaleY(toScale)
+            .translationX(rcx - ccx).translationY(rcy - ccy)
+            .alpha(0.4f)
+            .setDuration(240)
+            .setInterpolator(AccelerateInterpolator())
+            .withEndAction {
+                runCatching { wm.removeView(card) }
+                scrim?.let { runCatching { wm.removeView(it) } }
+                ringView?.visibility = View.VISIBLE
+            }
+            .start()
         handler.removeCallbacks(ringTimeout)
         handler.postDelayed(ringTimeout, 8000)
     }
