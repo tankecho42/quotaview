@@ -132,8 +132,18 @@ class IslandService : Service() {
 
     private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or (-0x60000000)
 
+    /** bar_side: "left"/"right" 吸附边 */
+    private fun barSide(): String =
+        getSharedPreferences("qv", MODE_PRIVATE).getString("bar_side", "right") ?: "right"
+
     private fun barDrawable() = GradientDrawable().apply {
-        cornerRadius = barW / 2f
+        val r = barW / 2f
+        if (barSide() == "right") {
+            // 贴右缘: 左侧圆角, 右侧直角 (贴屏平边)
+            setCornerRadii(floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r))
+        } else {
+            setCornerRadii(floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f))
+        }
         setColor(barColor())
     }
 
@@ -150,13 +160,17 @@ class IslandService : Service() {
         val p = getSharedPreferences("qv", MODE_PRIVATE)
         val defY = (screenH * 0.38f).toInt()
         // 关键: 旧版存的窄条坐标会把宽热区顶出屏 → 视觉条整个不可见. 强制夹回屏内
-        val savedX = p.getInt("bar_x", screenW - hostW).coerceIn(0, (screenW - hostW).coerceAtLeast(0))
+        // x 由吸附边决定: 要么贴左缘要么贴右缘 (bar 本来就该贴边)
+        val side = p.getString("bar_side", "right") ?: "right"
+        val savedX = if (side == "left") 0 else (screenW - hostW).coerceAtLeast(0)
         val savedY = p.getInt("bar_y", defY).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
         val params = overlayParams(hostW, hostH, savedX, savedY)
 
         val shape = View(this).apply { background = barDrawable() }
         val host = FrameLayout(this).apply {
-            addView(shape, FrameLayout.LayoutParams(barW, barH, Gravity.CENTER))
+            // 视觉条贴吸附侧: 右吸附靠右 (紧贴屏幕右缘), 左吸附靠左
+            val g = if (side == "left") Gravity.START else Gravity.END
+            addView(shape, FrameLayout.LayoutParams(barW, barH, g or Gravity.CENTER_VERTICAL))
         }
         host.setOnTouchListener { v, ev -> handleBarTouch(v as View, ev, params) }
         wm.addView(host, params)
@@ -217,8 +231,11 @@ class IslandService : Service() {
     }
 
     private fun saveBarPos(params: WindowManager.LayoutParams) {
+        val side = if (params.x + hostW / 2 < screenW / 2) "left" else "right"
         getSharedPreferences("qv", MODE_PRIVATE).edit()
-            .putInt("bar_x", params.x).putInt("bar_y", params.y).apply()
+            .putString("bar_side", side)
+            .putInt("bar_x", if (side == "left") 0 else screenW - hostW)
+            .putInt("bar_y", params.y).apply()
     }
 
     // ---------- RING: 滑出圆环 (可拖动/吸边/拖到边缘收回) ----------
@@ -238,7 +255,9 @@ class IslandService : Service() {
         if (!android.provider.Settings.canDrawOverlays(this)) return
         if (ringView != null) return
         val bp = barParams ?: return
-        val y = (bp.y + hostH / 2 - ringSize / 2).coerceIn(0, screenH - ringSize)
+        // 统一锚点: ring 中心 = bar 视觉条中心 (host y + barH/2)
+        val anchorY = bp.y + barH / 2
+        val y = (anchorY - ringSize / 2).coerceIn(0, screenH - ringSize)
         val endX = if (fromLeft) 0 else screenW - ringSize
         val startHiddenX = if (fromLeft) -ringSize else screenW
         val params = overlayParams(ringSize, ringSize, startHiddenX, y)
@@ -293,6 +312,8 @@ class IslandService : Service() {
                     hideRing()
                 } else {
                     snapRing(v, params)
+                    // 同步锚点: bar 将出现在 ring 吸边后的同高度
+                    saveAnchorFromRing(params)
                     handler.postDelayed(ringTimeout, 8000)
                 }
                 return true
@@ -312,9 +333,22 @@ class IslandService : Service() {
             doOnEnd {
                 params.x = target   // 强制精确贴边
                 runCatching { wm.updateViewLayout(v, params) }
+                saveAnchorFromRing(params)
             }
             start()
         }
+    }
+
+    /** ring 吸边后: 把锚点 (side+y) 写入 prefs, bar/ring 位置一体化 */
+    private fun saveAnchorFromRing(params: WindowManager.LayoutParams) {
+        val side = if (params.x < screenW / 2) "left" else "right"
+        // ring 中心 y = params.y + ringSize/2 → bar host y = anchorY - barH/2
+        val anchorY = params.y + ringSize / 2
+        val hostY = (anchorY - barH / 2).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
+        getSharedPreferences("qv", MODE_PRIVATE).edit()
+            .putString("bar_side", side)
+            .putInt("bar_x", if (side == "left") 0 else screenW - hostW)
+            .putInt("bar_y", hostY).apply()
     }
 
     private fun hideRing() {
