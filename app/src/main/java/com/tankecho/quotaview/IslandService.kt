@@ -586,19 +586,34 @@ class IslandService : Service() {
         val ccy = screenH / 2f
         val cardW2 = (250 * dp).toInt()
         val toScale = ringSize.toFloat() / cardW2
-        scrim?.animate()?.alpha(0f)?.setDuration(200)?.start()
-        card.animate()
-            .scaleX(toScale).scaleY(toScale)
-            .translationX(rcx - ccx).translationY(rcy - ccy)
-            .alpha(0.4f)
-            .setDuration(240)
-            .setInterpolator(AccelerateInterpolator())
-            .withEndAction {
+        scrim?.let { sv ->
+            sv.animate().alpha(0f).setDuration(200).withEndAction {
+                runCatching { wm.removeView(sv) }   // scrim 自己负责移除自己
+            }.start()
+        }
+        // 用 ValueAnimator 驱动 (不依赖 ViewPropertyAnimator 的结束帧行为),
+        // 结束回调里先把卡片 GONE (窗口立即停渲染) 再 removeView — 杜绝最后一帧闪现
+        val fromSx = card.scaleX; val fromSy = card.scaleY
+        val fromTx = card.translationX; val fromTy = card.translationY
+        val fromA = card.alpha
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 240
+            interpolator = AccelerateInterpolator()
+            addUpdateListener { a ->
+                val f = a.animatedValue as Float
+                card.scaleX = fromSx + (toScale - fromSx) * f
+                card.scaleY = fromSy + (toScale - fromSy) * f
+                card.translationX = fromTx + ((rcx - ccx) - fromTx) * f
+                card.translationY = fromTy + ((rcy - ccy) - fromTy) * f
+                card.alpha = fromA + (0.4f - fromA) * f
+            }
+            doOnEnd {
+                card.visibility = View.GONE      // 先停止渲染
                 runCatching { wm.removeView(card) }
-                scrim?.let { runCatching { wm.removeView(it) } }
                 ringView?.visibility = View.VISIBLE
             }
-            .start()
+            start()
+        }
         handler.removeCallbacks(ringTimeout)
         handler.postDelayed(ringTimeout, 8000)
     }
