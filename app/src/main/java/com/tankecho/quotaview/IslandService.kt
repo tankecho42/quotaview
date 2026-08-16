@@ -130,7 +130,7 @@ class IslandService : Service() {
             this.x = x; this.y = y
         }
 
-    private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or (-0x78000000)
+    private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or (-0x60000000)
 
     private fun barDrawable() = GradientDrawable().apply {
         cornerRadius = barW / 2f
@@ -149,8 +149,10 @@ class IslandService : Service() {
     private fun attachBarInner() {
         val p = getSharedPreferences("qv", MODE_PRIVATE)
         val defY = (screenH * 0.38f).toInt()
-        val params = overlayParams(hostW, hostH,
-            p.getInt("bar_x", screenW - hostW), p.getInt("bar_y", defY))
+        // 关键: 旧版存的窄条坐标会把宽热区顶出屏 → 视觉条整个不可见. 强制夹回屏内
+        val savedX = p.getInt("bar_x", screenW - hostW).coerceIn(0, (screenW - hostW).coerceAtLeast(0))
+        val savedY = p.getInt("bar_y", defY).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
+        val params = overlayParams(hostW, hostH, savedX, savedY)
 
         val shape = View(this).apply { background = barDrawable() }
         val host = FrameLayout(this).apply {
