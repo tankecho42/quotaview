@@ -189,6 +189,9 @@ class IslandService : Service() {
     }
 
     private var attachingBar = false
+    private var barMorphed = false
+    private var morphDownX = 0f; private var morphDownY = 0f
+    private var morphBaseX = 0; private var morphBaseY = 0
     private var downX = 0f; private var downY = 0f
     private var startX = 0; private var startY = 0
     private var moved = false
@@ -203,22 +206,88 @@ class IslandService : Service() {
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = ev.rawX - downX; val dy = ev.rawY - downY
-                if (dx * dx + dy * dy > 225) moved = true   // 15px 起算拖动 (抗手抖)
-                params.x = startX + dx.toInt()
-                params.y = (startY + dy.toInt()).coerceIn(0, screenH - hostH)
-                runCatching { wm.updateViewLayout(v, params) }
+                if (!moved && dx * dx + dy * dy > 225) {
+                    moved = true
+                    morphToRing(v, params, ev.rawX, ev.rawY)   // 拖动瞬间: bar 同窗口变圆环跟手
+                }
+                if (moved) {
+                    params.x = (morphBaseX + (ev.rawX - morphDownX).toInt())
+                        .coerceIn(-ringSize / 3, screenW - ringSize * 2 / 3)
+                    params.y = (morphBaseY + (ev.rawY - morphDownY).toInt())
+                        .coerceIn(0, screenH - ringSize)
+                    runCatching { wm.updateViewLayout(v, params) }
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                barShape?.alpha = 1f
-                val totalDx = ev.rawX - downX; val totalDy = ev.rawY - downY
-                // 一旦判定为拖动 (moved), 无论松手位置在哪都只吸附回竖条, 绝不切圆环
-                if (!moved && totalDx * totalDx + totalDy * totalDy < 100) {
+                // tap → 弹独立圆环; 拖动(morph 圆环) → 吸边后变回 bar
+                if (!moved) {
                     saveBarPos(params)
                     showRing(params.x < screenW / 2)
-                } else snapBar(v, params)
+                } else {
+                    snapMorphed(v, params)
+                }
             }
         }
         return true
+    }
+
+    /** 拖动瞬间: bar 窗口原地 morph 成圆环 (swap 子view+改窗口尺寸), 手势流不断 */
+    private fun morphToRing(host: View, params: WindowManager.LayoutParams, rawX: Float, rawY: Float) {
+        morphDownX = rawX; morphDownY = rawY
+        // morph 后窗口中心对齐手指: params.x/y 是新坐标系
+        morphBaseX = params.x + hostW / 2 - ringSize / 2
+        morphBaseY = params.y + hostH / 2 - ringSize / 2
+        val fr = host as? FrameLayout ?: return
+        fr.removeAllViews()
+        fr.addView(buildRingView(), FrameLayout.LayoutParams(ringSize, ringSize, Gravity.CENTER))
+        params.width = ringSize; params.height = ringSize
+        params.x = morphBaseX.toInt(); params.y = morphBaseY.toInt()
+        runCatching { wm.updateViewLayout(host, params) }
+        barMorphed = true
+    }
+
+    /** morph 圆环松手: 吸边动画, 结束后 morph 回 bar 形态 (原位) */
+    private fun snapMorphed(host: View, params: WindowManager.LayoutParams) {
+        val target = if (params.x + ringSize / 2 < screenW / 2) 0 else screenW - ringSize
+        ValueAnimator.ofInt(params.x, target).apply {
+            duration = 160
+            addUpdateListener { a ->
+                params.x = a.animatedValue as Int
+                runCatching { wm.updateViewLayout(host, params) }
+            }
+            doOnEnd {
+                params.x = target
+                morphBackToBar(host, params)
+            }
+            start()
+        }
+    }
+
+    /** 圆环形态 morph 回 bar */
+    private fun morphBackToBar(host: View, params: WindowManager.LayoutParams) {
+        val fr = host as? FrameLayout ?: return
+        // 锚点: bar 中心 = 圆环中心
+        val anchorY = params.y + ringSize / 2
+        val hostY = (anchorY - hostH / 2).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
+        val side = if (params.x < screenW / 2) "left" else "right"
+        val hostX = if (side == "left") 0 else screenW - hostW
+        val bv = com.tankecho.quotaview.ui.BarView(this@IslandService).apply {
+            usedPercent = currentWindow?.usedPercent?.toFloat() ?: 0f
+            healthColor = healthColor(currentWindow)
+            attachRight = (side == "right")
+        }
+        fr.removeAllViews()
+        val g = if (side == "left") Gravity.START else Gravity.END
+        fr.addView(bv, FrameLayout.LayoutParams(barW, barH, g or Gravity.CENTER_VERTICAL))
+        params.width = hostW; params.height = hostH
+        params.x = hostX; params.y = hostY
+        runCatching { wm.updateViewLayout(host, params) }
+        barMorphed = false
+        // 持久化新锚点
+        getSharedPreferences("qv", MODE_PRIVATE).edit()
+            .putString("bar_side", side).putInt("bar_x", hostX).putInt("bar_y", hostY).apply()
+        barShape = bv
+        barParams = params
     }
 
     private fun snapBar(v: View, params: WindowManager.LayoutParams) {
