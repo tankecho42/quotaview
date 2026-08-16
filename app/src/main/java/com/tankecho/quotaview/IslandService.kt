@@ -168,7 +168,11 @@ class IslandService : Service() {
         val savedY = p.getInt("bar_y", defY).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
         val params = overlayParams(hostW, hostH, savedX, savedY)
 
-        val shape = View(this).apply { background = barDrawable() }
+        val shape = com.tankecho.quotaview.ui.BarView(this).apply {
+            usedPercent = currentWindow?.usedPercent?.toFloat() ?: 0f
+            healthColor = healthColor(currentWindow)
+            attachRight = (side == "right")
+        }
         val host = FrameLayout(this).apply {
             // 视觉条贴吸附侧: 右吸附靠右 (紧贴屏幕右缘), 左吸附靠左
             val g = if (side == "left") Gravity.START else Gravity.END
@@ -445,7 +449,13 @@ class IslandService : Service() {
             textSize = 11f; setTextColor(0xFF5C6270.toInt()); gravity = Gravity.CENTER
             setPadding(0, (6 * dp).toInt(), 0, 0)
         })
-        card.setOnClickListener { }
+        card.setOnClickListener {
+            // 点详情卡 → 进入主界面
+            collapseDetail()
+            startActivity(Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            })
+        }
 
         val cardW = (250 * dp).toInt()
         val params = WindowManager.LayoutParams(
@@ -511,7 +521,11 @@ class IslandService : Service() {
         if (android.provider.Settings.canDrawOverlays(this)) {
             // ring/detail 展示期间不重建 bar (bar 由 hideRing 收缩时重建)
             if (barHost == null && ringView == null && detailView == null) attachBar()
-            barShape?.background = barDrawable()
+            (barShape as? com.tankecho.quotaview.ui.BarView)?.let {
+                it.usedPercent = win?.usedPercent?.toFloat() ?: 0f
+                it.healthColor = healthColor(win)
+                it.invalidate()
+            }
             ringView?.let {
                 it.usedPercent = win?.usedPercent?.toFloat() ?: 0f
                 it.timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
