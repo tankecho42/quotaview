@@ -247,6 +247,7 @@ class IslandService : Service() {
         usedPercent = win?.usedPercent?.toFloat() ?: 0f
         timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
         ringColor = healthColor(win)
+        bgColor = -0x33000000   // 纯黑 ~80% 不透明
         val prov = getSharedPreferences("qv", MODE_PRIVATE).getString("ring_provider", "codex")!!
         iconRes = if (prov == "codex") R.drawable.ic_openai else R.drawable.ic_zai
     }

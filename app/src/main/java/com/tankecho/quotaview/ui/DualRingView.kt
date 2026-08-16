@@ -20,10 +20,14 @@ class DualRingView @JvmOverloads constructor(
     var timeColor = 0xFF9BA1B0.toInt()
     var iconRes = 0
     var centerText: String? = null
+    /** 悬浮圆环场景: 纯黑半透明圆底 (叠加在内容下层); 详情卡场景不设 */
+    var bgColor: Int? = null
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF262A33.toInt(); style = Paint.Style.STROKE
+        color = (0xFF262A33.toInt() and 0x00FFFFFF) or -0x67000000   // ~60% 透明度
+        style = Paint.Style.STROKE
     }
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val usedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
@@ -43,6 +47,12 @@ class DualRingView @JvmOverloads constructor(
         val d = resources.displayMetrics.density
         val cx = width / 2f
         val cy = height / 2f
+
+        // 纯黑半透明圆底 (最底层)
+        bgColor?.let {
+            bgPaint.color = it
+            canvas.drawCircle(cx, cy, minOf(width, height) / 2f, bgPaint)
+        }
         // 防截断: 外沿 = 中心线半径 + 半个 stroke, 必须完整落在 view 内
         val outerStroke = d * 5
         val outerR = minOf(width, height) / 2f - outerStroke / 2 - d * 0.5f
@@ -52,9 +62,9 @@ class DualRingView @JvmOverloads constructor(
 
         trackPaint.strokeWidth = outerStroke
         usedPaint.strokeWidth = outerStroke
-        usedPaint.color = ringColor
+        usedPaint.color = (ringColor and 0x00FFFFFF) or -0x4D000000   // ~70%
         timePaint.strokeWidth = innerStroke
-        timePaint.color = timeColor
+        timePaint.color = (timeColor and 0x00FFFFFF) or -0x67000000   // ~60%
 
         // 外环: 额度用量 (顶部顺时针)
         oval.set(cx - outerR, cy - outerR, cx + outerR, cy + outerR)
