@@ -70,7 +70,7 @@ class SettingsActivity : AppCompatActivity() {
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
 
         // ---------- 灵动岛配置 ----------
-        root.addView(sectionLabel("LIVE RING · 灵动岛"))
+        root.addView(sectionLabel("LIVE RING · 悬浮窗"))
         root.addView(liveRingCard(prefs))
 
         root.addView(footer(prefs))
@@ -187,7 +187,7 @@ class SettingsActivity : AppCompatActivity() {
         // 标题行 + 总开关
         val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         titleRow.addView(TextView(this).apply {
-            text = "💍 灵动岛展示"
+            text = "💍 悬浮窗展示"
             textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -246,22 +246,27 @@ class SettingsActivity : AppCompatActivity() {
             topMargin = dp(12); bottomMargin = dp(4)
         })
 
-        // Provider 选择 (icon + 名称 的胶囊单选)
+        // Provider 选择 (icon + 名称 的胶囊单选; 重建函数统一管理, 不搞闭包转发)
         card.addView(fieldLabel("Provider"))
         val provRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val provList = listOf("Codex" to "codex", "GLM" to "glm")
-        provList.forEach { (name, id) ->
-            provRow.addView(makeProviderChip(name, id == prefs.getString("ring_provider", "codex")) { selected ->
-                if (selected) {
-                    prefs.edit().putString("ring_provider", id).apply()
-                    if (prefs.getBoolean("island_enabled", false)) {
-                        startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+        fun rebuildProvRow() {
+            val cur = prefs.getString("ring_provider", "codex")
+            provRow.removeAllViews()
+            listOf("Codex" to "codex", "GLM" to "glm").forEach { (name, id) ->
+                provRow.addView(makeProviderChip(name, id == cur) {
+                    if (id != cur) {
+                        prefs.edit().putString("ring_provider", id).apply()
+                        if (prefs.getBoolean("island_enabled", false)) {
+                            startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                        }
+                        ringPreview.iconRes = if (id == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+                        refreshRingPreview(prefs)
                     }
-                    ringPreview.iconRes = if (id == "codex") R.drawable.ic_openai else R.drawable.ic_zai
-                    refreshRingPreview(prefs)
-                }
-            })
+                    rebuildProvRow()
+                })
+            }
         }
+        rebuildProvRow()
         card.addView(provRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
         // 窗口类型
@@ -292,7 +297,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // 诊断按钮
         val diagBtn = TextView(this).apply {
-            text = "🩺 诊断灵动岛"
+            text = "🩺 诊断悬浮窗"
             textSize = 13f; setTextColor(0xFF6E8BFF.toInt()); paint.isFakeBoldText = true
             setPadding(dp(2), dp(14), dp(2), dp(6))
             setOnClickListener { diagIsland() }
@@ -441,18 +446,7 @@ class SettingsActivity : AppCompatActivity() {
                 setTextColor(if (selected) 0xFFE6E8EE.toInt() else 0xFF9BA1B0.toInt())
                 paint.isFakeBoldText = selected
             })
-            setOnClickListener {
-                // 单选: 重新渲染整行
-                (parent as? LinearLayout)?.let { row ->
-                    val idx = row.indexOfChild(this)
-                    row.removeAllViews()
-                    val provs = listOf("Codex" to "codex", "GLM" to "glm")
-                    provs.forEachIndexed { i, (nm, id) ->
-                        row.addView(makeProviderChip(nm, i == idx) { sel -> if (sel) onClick(true) })
-                    }
-                }
-                onClick(true)
-            }
+            setOnClickListener { onClick(true) }   // 状态与重建由外部统一管理 (修复转发闭包导致的切换失效)
         }
 
     private fun makeChip(text: String, selected: Boolean, onClick: (Boolean) -> Unit): TextView = TextView(this).apply {

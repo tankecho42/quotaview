@@ -211,8 +211,8 @@ class IslandService : Service() {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 barShape?.alpha = 1f
                 val totalDx = ev.rawX - downX; val totalDy = ev.rawY - downY
-                val realMoved = moved && (totalDx * totalDx + totalDy * totalDy > 100)
-                if (!realMoved) {
+                // 一旦判定为拖动 (moved), 无论松手位置在哪都只吸附回竖条, 绝不切圆环
+                if (!moved && totalDx * totalDx + totalDy * totalDy < 100) {
                     saveBarPos(params)
                     showRing(params.x < screenW / 2)
                 } else snapBar(v, params)
