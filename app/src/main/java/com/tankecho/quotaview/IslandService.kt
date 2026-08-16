@@ -141,8 +141,10 @@ class IslandService : Service() {
         if (barSide() == "right") {
             // 贴右缘: 左侧圆角, 右侧直角 (贴屏平边)
             setCornerRadii(floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r))
+            setStroke((1 * dp).toInt().coerceAtLeast(1), 0x66000000)   // 1dp 半透明黑边框 (右侧直角处被屏幕裁掉)
         } else {
             setCornerRadii(floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f))
+            setStroke((1 * dp).toInt().coerceAtLeast(1), 0x66000000)
         }
         setColor(barColor())
     }
@@ -197,14 +199,16 @@ class IslandService : Service() {
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = ev.rawX - downX; val dy = ev.rawY - downY
-                if (dx * dx + dy * dy > 100) moved = true
+                if (dx * dx + dy * dy > 225) moved = true   // 15px 起算拖动 (抗手抖)
                 params.x = startX + dx.toInt()
                 params.y = (startY + dy.toInt()).coerceIn(0, screenH - hostH)
                 runCatching { wm.updateViewLayout(v, params) }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 barShape?.alpha = 1f
-                if (!moved) {
+                val totalDx = ev.rawX - downX; val totalDy = ev.rawY - downY
+                val realMoved = moved && (totalDx * totalDx + totalDy * totalDy > 100)
+                if (!realMoved) {
                     saveBarPos(params)
                     showRing(params.x < screenW / 2)
                 } else snapBar(v, params)
@@ -247,7 +251,7 @@ class IslandService : Service() {
         usedPercent = win?.usedPercent?.toFloat() ?: 0f
         timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
         ringColor = healthColor(win)
-        bgColor = -0x33000000   // 纯黑 ~80% 不透明
+        bgColor = 0x66000000.toInt()   // 黑 40% 不透明 = 60% 透明 (按用户口径)
         val prov = getSharedPreferences("qv", MODE_PRIVATE).getString("ring_provider", "codex")!!
         iconRes = if (prov == "codex") R.drawable.ic_openai else R.drawable.ic_zai
     }
@@ -267,6 +271,7 @@ class IslandService : Service() {
         detachBar()   // 先移除长条再上 ring (顺序换: addView 前 bar 一定已清)
         wm.addView(v, params)
         ringView = v; ringParams = params
+        ringShownAt = System.currentTimeMillis()
         saveBarPos(bp)
         ValueAnimator.ofInt(startHiddenX, endX).apply {
             duration = 240
@@ -283,6 +288,7 @@ class IslandService : Service() {
     private var rDownX = 0f; private var rDownY = 0f
     private var rStartX = 0; private var rStartY = 0
     private var rMoved = false
+    private var ringShownAt = 0L
 
     private fun handleRingTouch(v: View, ev: MotionEvent, params: WindowManager.LayoutParams): Boolean {
         when (ev.actionMasked) {
@@ -295,7 +301,7 @@ class IslandService : Service() {
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = ev.rawX - rDownX; val dy = ev.rawY - rDownY
-                if (dx * dx + dy * dy > 400) rMoved = true
+                if (dx * dx + dy * dy > 225) rMoved = true   // 15px 起算拖动 (抗手抖)
                 params.x = rStartX + dx.toInt()
                 params.y = (rStartY + dy.toInt()).coerceIn(0, screenH - ringSize)
                 runCatching { wm.updateViewLayout(v, params) }
@@ -303,13 +309,16 @@ class IslandService : Service() {
             }
             MotionEvent.ACTION_UP -> {
                 val dx = ev.rawX - rDownX; val dy = ev.rawY - rDownY
-                if (!rMoved && dx * dx + dy * dy < 900) {
+                val realMoved = rMoved && (dx * dx + dy * dy > 100)
+                if (!realMoved) {
                     showDetail()
                     return true
                 }
-                // 拖到屏幕左右边缘 12% 区域 → 滑回收缩
-                val atEdge = params.x < screenW * 0.12f || params.x + ringSize > screenW * 0.88f
+                // 拖到屏幕最边缘 (左右各 8%) 才算收缩手势; 松手时以最终位置定锚点
+                val finalSide = if (params.x + ringSize / 2 < screenW / 2) "left" else "right"
+                val atEdge = params.x < screenW * 0.08f || params.x + ringSize > screenW * 0.92f
                 if (atEdge) {
+                    saveAnchorFromRing(params)   // 收缩前先存锚点 → bar 出现在 ring 实际位置
                     hideRing()
                 } else {
                     snapRing(v, params)
@@ -342,7 +351,7 @@ class IslandService : Service() {
 
     /** ring 吸边后: 把锚点 (side+y) 写入 prefs, bar/ring 位置一体化 */
     private fun saveAnchorFromRing(params: WindowManager.LayoutParams) {
-        val side = if (params.x < screenW / 2) "left" else "right"
+        val side = if (params.x + ringSize / 2 < screenW / 2) "left" else "right"
         // ring 中心 y = params.y + ringSize/2 → bar host y = anchorY - barH/2
         val anchorY = params.y + ringSize / 2
         val hostY = (anchorY - barH / 2).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
