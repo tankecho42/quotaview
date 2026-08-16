@@ -8,8 +8,7 @@ import android.util.AttributeSet
 import android.view.View
 
 /**
- * 灵动岛预览: 双同心圆环 + 中心 icon
- * 外环 = 额度用量, 内环 = 时间进度
+ * 双同心圆环: 外环=额度用量(粗), 内环=时间进度(细, 紧贴外环内侧), 中心=provider icon
  */
 class DualRingView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null,
@@ -44,10 +43,11 @@ class DualRingView @JvmOverloads constructor(
         val d = resources.displayMetrics.density
         val cx = width / 2f
         val cy = height / 2f
-        val outerR = minOf(width, height) / 2f - d * 3
-        val outerStroke = d * 6
-        val innerR = outerR - d * 11
-        val innerStroke = d * 4
+        val outerR = minOf(width, height) / 2f - d * 2
+        val outerStroke = d * 5
+        // 内环紧贴外环内侧: 内环外沿 = 外环内沿
+        val innerR = outerR - outerStroke / 2 - d * 1.5f - (d * 2.5f) / 2
+        val innerStroke = d * 2.5f
 
         trackPaint.strokeWidth = outerStroke
         usedPaint.strokeWidth = outerStroke
@@ -55,7 +55,7 @@ class DualRingView @JvmOverloads constructor(
         timePaint.strokeWidth = innerStroke
         timePaint.color = timeColor
 
-        // 外环: 额度用量 (从顶部顺时针)
+        // 外环: 额度用量 (顶部顺时针)
         oval.set(cx - outerR, cy - outerR, cx + outerR, cy + outerR)
         canvas.drawArc(oval, -90f, 360f, false, trackPaint)
         canvas.drawArc(oval, -90f, 360f * (usedPercent / 100f).coerceIn(0f, 1f), false, usedPaint)
@@ -66,14 +66,15 @@ class DualRingView @JvmOverloads constructor(
         canvas.drawArc(oval, -90f, 360f, false, trackPaint)
         canvas.drawArc(oval, -90f, 360f * (timeElapsedPercent / 100f).coerceIn(0f, 1f), false, timePaint)
 
-        // 中心: icon 或 百分比
+        // 中心: provider icon
         if (iconRes != 0) {
             val dr = resources.getDrawable(iconRes, null)
-            val s = (innerR - d * 5) * 1.6f
+            val s = (innerR - d * 6) * 1.55f
             dr.setBounds((cx - s / 2).toInt(), (cy - s / 2).toInt(), (cx + s / 2).toInt(), (cy + s / 2).toInt())
             dr.draw(canvas)
         } else {
             centerText?.let { canvas.drawText(it, cx, cy + textPaint.textSize / 3, textPaint) }
         }
     }
+
 }
