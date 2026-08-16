@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.tankecho.quotaview.data.CodexApi
@@ -30,12 +31,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 灵动岛 v4: 三态悬浮窗.
+ * 灵动岛 v5: 三态悬浮窗.
  *
- * BAR    平常态: 贴边半透明长条 (颜色=健康度), 可拖动, 松手吸附左右边缘
- * RING   轻点长条: 长条消失, 圆环从吸附侧滑出 (外环=用量, 内环=时间, 中心=provider icon)
+ * BAR    平常态: 贴边半透明胶囊长条 (颜色=健康度), 宽触摸热区, 可拖动, 松手吸边
+ * RING   轻点长条: 长条消失, 圆环从吸附侧滑出; 圆环可拖动 + 吸边; 拖到屏幕边缘松手 → 滑回收缩
  * DETAIL 轻点圆环: 展开详情卡; 点卡外任意处 (scrim) 收回 RING
- * RING 8 秒无操作自动滑回边缘收起, 长条重现
+ * RING 8 秒无操作自动滑回边缘收起
  *
  * 数据: 每 5 分钟自动轮询刷新 (无需打开 App)
  */
@@ -47,7 +48,8 @@ class IslandService : Service() {
     private var lastUpdateAt = 0L
 
     private lateinit var wm: WindowManager
-    private var barView: View? = null
+    private var barHost: FrameLayout? = null
+    private var barShape: View? = null
     private var barParams: WindowManager.LayoutParams? = null
     private var ringView: DualRingView? = null
     private var ringParams: WindowManager.LayoutParams? = null
@@ -55,14 +57,19 @@ class IslandService : Service() {
     private var scrimView: View? = null
 
     private val dp: Float get() = resources.displayMetrics.density
+    private val screenW: Int get() = resources.displayMetrics.widthPixels
+    private val screenH: Int get() = resources.displayMetrics.heightPixels
+
     private val ringSize: Int get() = (52 * dp).toInt()
-    private val barW: Int get() = (6 * dp).toInt()
-    private val barH: Int get() = (110 * dp).toInt()
+    private val barW: Int get() = (11 * dp).toInt()        // 视觉宽
+    private val barH: Int get() = (72 * dp).toInt()        // 视觉高 (缩短)
+    private val hostW: Int get() = (30 * dp).toInt()       // 触摸热区 (加宽, 好按好拖)
+    private val hostH: Int get() = (barH + (14 * dp).toInt())
 
     private val poll = object : Runnable {
         override fun run() {
             scope.launch { refreshData() }
-            handler.postDelayed(this, 5 * 60 * 1000L)   // 5 分钟自动刷新
+            handler.postDelayed(this, 5 * 60 * 1000L)
         }
     }
 
@@ -108,9 +115,9 @@ class IslandService : Service() {
             .build())
     }
 
-    // ---------- BAR: 贴边长条 ----------
+    // ---------- BAR: 贴边胶囊长条 (宽热区容器) ----------
 
-    private fun barParams(x: Int, y: Int): WindowManager.LayoutParams =
+    private fun overlayParams(w: Int, h: Int, x: Int, y: Int): WindowManager.LayoutParams =
         WindowManager.LayoutParams(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -119,40 +126,47 @@ class IslandService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            width = barW; height = barH
+            width = w; height = h
             this.x = x; this.y = y
         }
 
-    private fun savedBarParams(): WindowManager.LayoutParams {
-        val p = getSharedPreferences("qv", MODE_PRIVATE)
-        val defY = (resources.displayMetrics.heightPixels * 0.38f).toInt()
-        val x = p.getInt("bar_x", resources.displayMetrics.widthPixels - barW)
-        val y = p.getInt("bar_y", defY)
-        return barParams(x, y)
+    private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or (-0x78000000)
+
+    private fun barDrawable() = GradientDrawable().apply {
+        cornerRadius = barW / 2f
+        setColor(barColor())
     }
 
-    private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or 0x66000000
-
     private fun attachBar() {
-        detachBar()
-        val params = savedBarParams()
-        val v = View(this).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = barW.toFloat()
-                setColor(barColor())
-            }
+        if (attachingBar) return   // 防重入 (并发 refreshData 双 attach)
+        attachingBar = true
+        try {
+            detachBar()          // 确保旧的清干净再建
+            attachBarInner()
+        } finally { attachingBar = false }
+    }
+
+    private fun attachBarInner() {
+        val p = getSharedPreferences("qv", MODE_PRIVATE)
+        val defY = (screenH * 0.38f).toInt()
+        val params = overlayParams(hostW, hostH,
+            p.getInt("bar_x", screenW - hostW), p.getInt("bar_y", defY))
+
+        val shape = View(this).apply { background = barDrawable() }
+        val host = FrameLayout(this).apply {
+            addView(shape, FrameLayout.LayoutParams(barW, barH, Gravity.CENTER))
         }
-        v.setOnTouchListener { t, ev -> handleBarTouch(t, ev, params) }
-        wm.addView(v, params)
-        barParams = params
-        barView = v
+        host.setOnTouchListener { v, ev -> handleBarTouch(v as View, ev, params) }
+        wm.addView(host, params)
+        barHost = host; barShape = shape; barParams = params
     }
 
     private fun detachBar() {
-        barView?.let { runCatching { wm.removeView(it) } }
-        barView = null
+        barHost?.let { runCatching { wm.removeView(it) } }
+        barHost = null; barShape = null
     }
 
+    private var attachingBar = false
     private var downX = 0f; private var downY = 0f
     private var startX = 0; private var startY = 0
     private var moved = false
@@ -163,18 +177,20 @@ class IslandService : Service() {
                 downX = ev.rawX; downY = ev.rawY
                 startX = params.x; startY = params.y
                 moved = false
+                barShape?.alpha = 1f   // 按住提亮, 明确反馈
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = ev.rawX - downX; val dy = ev.rawY - downY
-                if (dx * dx + dy * dy > 144) moved = true
+                if (dx * dx + dy * dy > 100) moved = true
                 params.x = startX + dx.toInt()
-                params.y = (startY + dy.toInt()).coerceIn(0, resources.displayMetrics.heightPixels - barH)
+                params.y = (startY + dy.toInt()).coerceIn(0, screenH - hostH)
                 runCatching { wm.updateViewLayout(v, params) }
             }
-            MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                barShape?.alpha = 1f
                 if (!moved) {
                     saveBarPos(params)
-                    showRing(params.x < resources.displayMetrics.widthPixels / 2)
+                    showRing(params.x < screenW / 2)
                 } else snapBar(v, params)
             }
         }
@@ -182,15 +198,18 @@ class IslandService : Service() {
     }
 
     private fun snapBar(v: View, params: WindowManager.LayoutParams) {
-        val w = resources.displayMetrics.widthPixels
-        val target = if (params.x + barW / 2 < w / 2) 0 else w - barW
+        val target = if (params.x + hostW / 2 < screenW / 2) 0 else screenW - hostW
         ValueAnimator.ofInt(params.x, target).apply {
             duration = 160
             addUpdateListener { a ->
                 params.x = a.animatedValue as Int
                 runCatching { wm.updateViewLayout(v, params) }
             }
-            doOnEnd { saveBarPos(params) }
+            doOnEnd {
+                params.x = target
+                runCatching { wm.updateViewLayout(v, params) }
+                saveBarPos(params)
+            }
             start()
         }
     }
@@ -200,22 +219,9 @@ class IslandService : Service() {
             .putInt("bar_x", params.x).putInt("bar_y", params.y).apply()
     }
 
-    // ---------- RING: 滑出圆环 ----------
+    // ---------- RING: 滑出圆环 (可拖动/吸边/拖到边缘收回) ----------
 
     private val ringTimeout = Runnable { hideRing() }
-
-    private fun ringParams(x: Int, y: Int): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            width = ringSize; height = ringSize
-            this.x = x; this.y = y
-        }
 
     private fun buildRingView(): DualRingView = DualRingView(this).apply {
         val win = currentWindow
@@ -229,29 +235,17 @@ class IslandService : Service() {
     private fun showRing(fromLeft: Boolean) {
         if (!android.provider.Settings.canDrawOverlays(this)) return
         if (ringView != null) return
-        val w = resources.displayMetrics.widthPixels
         val bp = barParams ?: return
-        val y = (bp.y + barH / 2 - ringSize / 2)
-            .coerceIn(0, resources.displayMetrics.heightPixels - ringSize)
-        val endX = if (fromLeft) 0 else w - ringSize
-        val startHiddenX = if (fromLeft) -ringSize else w
-        val params = ringParams(startHiddenX, y)
+        val y = (bp.y + hostH / 2 - ringSize / 2).coerceIn(0, screenH - ringSize)
+        val endX = if (fromLeft) 0 else screenW - ringSize
+        val startHiddenX = if (fromLeft) -ringSize else screenW
+        val params = overlayParams(ringSize, ringSize, startHiddenX, y)
         val v = buildRingView()
-        var rDownX = 0f; var rDownY = 0f
-        v.setOnTouchListener { _, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { rDownX = ev.rawX; rDownY = ev.rawY; true }
-                MotionEvent.ACTION_UP -> {
-                    val dx = ev.rawX - rDownX; val dy = ev.rawY - rDownY
-                    if (dx * dx + dy * dy < 900) showDetail()
-                    true
-                }
-                else -> false
-            }
-        }
+        v.setOnTouchListener { _, ev -> handleRingTouch(v, ev, params) }
+        detachBar()   // 先移除长条再上 ring (顺序换: addView 前 bar 一定已清)
         wm.addView(v, params)
         ringView = v; ringParams = params
-        barView?.visibility = View.GONE
+        saveBarPos(bp)
         ValueAnimator.ofInt(startHiddenX, endX).apply {
             duration = 240
             addUpdateListener { a ->
@@ -264,11 +258,67 @@ class IslandService : Service() {
         handler.postDelayed(ringTimeout, 8000)
     }
 
+    private var rDownX = 0f; private var rDownY = 0f
+    private var rStartX = 0; private var rStartY = 0
+    private var rMoved = false
+
+    private fun handleRingTouch(v: View, ev: MotionEvent, params: WindowManager.LayoutParams): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                rDownX = ev.rawX; rDownY = ev.rawY
+                rStartX = params.x; rStartY = params.y
+                rMoved = false
+                handler.removeCallbacks(ringTimeout)   // 拖动中不回收
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = ev.rawX - rDownX; val dy = ev.rawY - rDownY
+                if (dx * dx + dy * dy > 400) rMoved = true
+                params.x = rStartX + dx.toInt()
+                params.y = (rStartY + dy.toInt()).coerceIn(0, screenH - ringSize)
+                runCatching { wm.updateViewLayout(v, params) }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = ev.rawX - rDownX; val dy = ev.rawY - rDownY
+                if (!rMoved && dx * dx + dy * dy < 900) {
+                    showDetail()
+                    return true
+                }
+                // 拖到屏幕左右边缘 12% 区域 → 滑回收缩
+                val atEdge = params.x < screenW * 0.12f || params.x + ringSize > screenW * 0.88f
+                if (atEdge) {
+                    hideRing()
+                } else {
+                    snapRing(v, params)
+                    handler.postDelayed(ringTimeout, 8000)
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun snapRing(v: View, params: WindowManager.LayoutParams) {
+        val target = if (params.x + ringSize / 2 < screenW / 2) 0 else screenW - ringSize
+        ValueAnimator.ofInt(params.x, target).apply {
+            duration = 160
+            addUpdateListener { a ->
+                params.x = a.animatedValue as Int
+                runCatching { wm.updateViewLayout(v, params) }
+            }
+            doOnEnd {
+                params.x = target   // 强制精确贴边
+                runCatching { wm.updateViewLayout(v, params) }
+            }
+            start()
+        }
+    }
+
     private fun hideRing() {
-        val rv = ringView ?: run { barView?.visibility = View.VISIBLE; return }
+        val rv = ringView ?: run { if (barHost == null) attachBar(); return }
         val p = ringParams ?: return
-        val w = resources.displayMetrics.widthPixels
-        val target = if (p.x < w / 2) -ringSize else w
+        val target = if (p.x < screenW / 2) -ringSize else screenW
         ValueAnimator.ofInt(p.x, target).apply {
             duration = 200
             addUpdateListener { a ->
@@ -277,7 +327,7 @@ class IslandService : Service() {
             }
             doOnEnd {
                 detachRing()
-                barView?.visibility = View.VISIBLE
+                if (android.provider.Settings.canDrawOverlays(this@IslandService) && barHost == null) attachBar()
             }
             start()
         }
@@ -299,7 +349,6 @@ class IslandService : Service() {
         val provName = if (prov == "codex") "Codex" else "GLM"
         val iconRes = if (prov == "codex") R.drawable.ic_openai else R.drawable.ic_zai
 
-        // 1. 全屏 scrim: 捕捉"详情之外"的点击 (先加 = 底层)
         val scrim = View(this)
         val sp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -314,7 +363,6 @@ class IslandService : Service() {
         runCatching { wm.addView(scrim, sp) }
         scrimView = scrim
 
-        // 2. 详情卡
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -351,9 +399,8 @@ class IslandService : Service() {
             textSize = 11f; setTextColor(0xFF5C6270.toInt()); gravity = Gravity.CENTER
             setPadding(0, (6 * dp).toInt(), 0, 0)
         })
-        card.setOnClickListener { }   // 吞掉卡上点击, 不穿透 scrim
+        card.setOnClickListener { }
 
-        val rp = ringParams
         val cardW = (250 * dp).toInt()
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -402,7 +449,13 @@ class IslandService : Service() {
                 if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
                 else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
             }.getOrNull()
-        } ?: return
+        } ?: run {
+            // 数据失败: 悬浮窗照样显示占位 (灰蓝色), 不能让窗口消失
+            if (android.provider.Settings.canDrawOverlays(this)) {
+                if (barHost == null && ringView == null && detailView == null) attachBar()
+            }
+            return
+        }
 
         lastUpdateAt = System.currentTimeMillis()
         val winKey = prefs.getString("ring_window", "primary") ?: "primary"
@@ -410,13 +463,9 @@ class IslandService : Service() {
         currentWindow = win
 
         if (android.provider.Settings.canDrawOverlays(this)) {
-            if (barView == null) attachBar()
-            // 长条颜色 = 健康度
-            barView?.background = GradientDrawable().apply {
-                cornerRadius = barW.toFloat()
-                setColor(barColor())
-            }
-            // 圆环实时数据
+            // ring/detail 展示期间不重建 bar (bar 由 hideRing 收缩时重建)
+            if (barHost == null && ringView == null && detailView == null) attachBar()
+            barShape?.background = barDrawable()
             ringView?.let {
                 it.usedPercent = win?.usedPercent?.toFloat() ?: 0f
                 it.timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f

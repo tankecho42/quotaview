@@ -43,11 +43,12 @@ class DualRingView @JvmOverloads constructor(
         val d = resources.displayMetrics.density
         val cx = width / 2f
         val cy = height / 2f
-        val outerR = minOf(width, height) / 2f - d * 2
+        // 防截断: 外沿 = 中心线半径 + 半个 stroke, 必须完整落在 view 内
         val outerStroke = d * 5
+        val outerR = minOf(width, height) / 2f - outerStroke / 2 - d * 0.5f
         // 内环紧贴外环内侧: 内环外沿 = 外环内沿
-        val innerR = outerR - outerStroke / 2 - d * 1.5f - (d * 2.5f) / 2
         val innerStroke = d * 2.5f
+        val innerR = outerR - outerStroke / 2 - d * 1.5f - innerStroke / 2
 
         trackPaint.strokeWidth = outerStroke
         usedPaint.strokeWidth = outerStroke
