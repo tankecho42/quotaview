@@ -348,60 +348,73 @@ class MainActivity : AppCompatActivity() {
     private fun providerRingCard(st: ProviderStatus, compact: Boolean): View {
         val selectedKey = prefs.getString("home_metric_${st.id}", null)
         val metric = ProviderMetrics.select(st, selectedKey)
-        val ringSize = dp(if (compact) 112 else 148)
+        val ringSize = dp(if (compact) 78 else 112)
+        val color = metricHealthColor(metric)
         return card().apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(if (compact) 10 else 16), dp(14), dp(if (compact) 10 else 16), dp(14))
-
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(providerMark(st.id, 20).apply {
-                    layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(8) }
-                })
-                addView(TextView(this@MainActivity).apply {
-                    text = st.name
-                    textSize = if (compact) 14f else 16f
-                    setTextColor(0xFFF2F3F7.toInt())
-                    paint.isFakeBoldText = true
-                    maxLines = 1
-                })
-            })
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(if (compact) 9 else 14), dp(13), dp(if (compact) 9 else 14), dp(13))
 
             addView(DualRingView(this@MainActivity).apply {
                 usedPercent = metric?.usedPercent?.toFloat() ?: 0f
                 timeElapsedPercent = metric?.timeElapsedPercent?.toFloat() ?: 0f
-                ringColor = metricHealthColor(metric)
-                iconRes = 0
-                centerText = metric?.usedPercent?.let { if (it > 999) "999%+" else "$it%" } ?: "—"
-                centerTextSizeSp = if (compact) 18f else 22f
-            }, LinearLayout.LayoutParams(ringSize, ringSize).apply { topMargin = dp(10) })
-
-            addView(TextView(this@MainActivity).apply {
-                text = when {
-                    st.error != null -> "请求失败"
-                    metric != null -> metric.label
-                    else -> "暂无可用指标"
-                }
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTextColor(if (st.error != null) 0xFFE5484D.toInt() else 0xFFD9DDEA.toInt())
-                paint.isFakeBoldText = true
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = dp(7) }
+                ringColor = color
+                iconRes = ProviderIcons.icon(st.id)
+                centerText = if (iconRes == 0) st.name.take(1).uppercase() else null
+                centerTextSizeSp = if (compact) 15f else 18f
+            }, LinearLayout.LayoutParams(ringSize, ringSize).apply {
+                rightMargin = dp(if (compact) 9 else 16)
             })
-            addView(TextView(this@MainActivity).apply {
-                text = ringMetricDetail(st, metric)
-                textSize = 11.5f
-                gravity = Gravity.CENTER
-                setTextColor(0xFF737B8C.toInt())
-                maxLines = 2
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = dp(4) }
+
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = st.name
+                    textSize = if (compact) 13.5f else 17f
+                    setTextColor(0xFFF2F3F7.toInt())
+                    paint.isFakeBoldText = true
+                    maxLines = 1
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = buildList {
+                        if (st.plan.isNotBlank() && st.plan != "?") add(st.plan)
+                        add(when {
+                            st.error != null -> "请求失败"
+                            metric != null -> metric.label
+                            else -> "暂无可用指标"
+                        })
+                    }.joinToString(" · ")
+                    textSize = if (compact) 10f else 11.5f
+                    setTextColor(if (st.error != null) 0xFFE5484D.toInt() else 0xFF81899A.toInt())
+                    maxLines = 1
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = dp(3) }
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = metric?.let { "${it.usedPercent}%" } ?: "—"
+                    textSize = if (compact) 20f else 28f
+                    setTextColor(if (st.error != null) 0xFFE5484D.toInt() else color)
+                    paint.isFakeBoldText = true
+                    maxLines = 1
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = dp(if (compact) 2 else 4) }
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = ringMetricDetail(st, metric)
+                    textSize = if (compact) 9.5f else 11.5f
+                    setTextColor(0xFF737B8C.toInt())
+                    maxLines = 2
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = dp(2) }
+                })
             })
         }
     }
@@ -419,8 +432,9 @@ class MainActivity : AppCompatActivity() {
             return if (budget == null) "预算数据尚未返回" else
                 "${formatBalance(budget.spent, budget.currency)} / ${formatBalance(budget.limit, budget.currency)}"
         }
-        val elapsed = metric.timeElapsedPercent.takeIf { it > 0 }?.let { " · 已过 $it%" }.orEmpty()
-        return "已用 ${metric.usedPercent}%$elapsed"
+        return metric.timeElapsedPercent.takeIf { it > 0 }
+            ?.let { "时间已过 $it%" }
+            ?: "时间进度暂不可用"
     }
 
     private fun metricHealthColor(metric: QuotaWindow?): Int = when {
