@@ -39,6 +39,8 @@ data class ProviderStatus(
     val error: String? = null,
     val balances: List<BalanceMetric> = emptyList(),
     val budgets: List<BudgetWindow> = emptyList(),
+    val detailMessage: String? = null,
+    val detailMessageIsError: Boolean = false,
 ) {
     val hasData: Boolean get() = windows.isNotEmpty() || balances.isNotEmpty() || budgets.isNotEmpty()
 }
@@ -51,14 +53,13 @@ data class BalanceMetric(
     val detail: String? = null,
 )
 
-/** 用户自定义预算与本机观测支出。usedPercent 不封顶，可真实显示超预算比例。 */
+/** 用户自定义预算与官方账单支出。usedPercent 不封顶，可真实显示超预算比例。 */
 data class BudgetWindow(
     val label: String,
     val spent: Double,
     val limit: Double,
     val currency: String,
-    val periodSeconds: Long,
-    val observedSince: Long,
+    val periodDays: Int,
 ) {
     val usedPercent: Int
         get() = if (limit <= 0) 0 else ((spent / limit) * 100)

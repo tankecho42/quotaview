@@ -15,7 +15,8 @@ import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.CostSimulator
 import com.tankecho.quotaview.data.DeepSeekApi
-import com.tankecho.quotaview.data.DeepSeekBudgetTracker
+import com.tankecho.quotaview.data.DeepSeekBudgetLimits
+import com.tankecho.quotaview.data.DeepSeekDailyCostApi
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
@@ -48,6 +49,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        // v0.13.3 起改用 DeepSeek 官方日账单，清除旧版余额差估算历史。
+        if (prefs.contains("deepseek_budget_history_v1")) {
+            prefs.edit().remove("deepseek_budget_history_v1").apply()
+        }
 
         // 灵动岛: 按持久化开关恢复服务
         if (prefs.getBoolean("island_enabled", false)) {
@@ -126,7 +131,34 @@ class MainActivity : AppCompatActivity() {
                     async { runCatching {
                         val key = prefs.getString("deepseek_key", "").orEmpty()
                         if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) {
-                            DeepSeekBudgetTracker.recordAndApply(prefs, key, DeepSeekApi.fetch(key))
+                            val status = DeepSeekApi.fetch(key)
+                            val limits = DeepSeekBudgetLimits.parse(
+                                prefs.getString("deepseek_budget_24h", ""),
+                                prefs.getString("deepseek_budget_7d", ""),
+                                prefs.getString("deepseek_budget_30d", ""),
+                            )
+                            val platformToken = prefs.getString("deepseek_platform_token", "").orEmpty()
+                            when {
+                                status.error != null || !limits.isConfigured -> status
+                                platformToken.isBlank() -> status.copy(
+                                    detailMessage = "填写 Platform userToken 后显示官方日账单预算",
+                                )
+                                else -> try {
+                                    val costs = DeepSeekDailyCostApi.fetch(
+                                        platformToken,
+                                        status.balances.firstOrNull()?.currency,
+                                    )
+                                    status.copy(
+                                        budgets = costs.budgetWindows(limits),
+                                        detailMessage = "DeepSeek Platform 官方日账单 · 按自然日汇总",
+                                    )
+                                } catch (e: Exception) {
+                                    status.copy(
+                                        detailMessage = "官方日账单读取失败：${e.message ?: "未知错误"}",
+                                        detailMessageIsError = true,
+                                    )
+                                }
+                            }
                         } else null
                     }.getOrNull() },
                     ).awaitAll().filterNotNull()
@@ -307,11 +339,11 @@ class MainActivity : AppCompatActivity() {
                 ).apply { bottomMargin = dp(12) }
             })
         }
-        st.budgets.minOfOrNull { it.observedSince }?.let { observedSince ->
+        st.detailMessage?.let { message ->
             body.addView(tv(
-                "本机观测 · 记录始于 ${fmtReset.format(Date(observedSince * 1000))} · 充值不冲减支出",
+                message,
                 12,
-                0xFF6F7482.toInt(),
+                if (st.detailMessageIsError) 0xFFE5484D.toInt() else 0xFF6F7482.toInt(),
                 bottom = 4,
             ))
         }

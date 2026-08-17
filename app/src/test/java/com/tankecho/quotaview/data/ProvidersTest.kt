@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
+import java.time.YearMonth
 
 class ProvidersTest {
 
@@ -169,26 +171,83 @@ class ProvidersTest {
     }
 
     @Test
-    fun budgetMathProportionallyAttributesSpendAcrossRollingWindows() {
-        val hour = 60L * 60 * 1000
-        val now = 10L * 24 * hour
-        val events = listOf(SpendInterval(now - 48 * hour, now, 20.0))
+    fun deepSeekDailyCostsAggregateOfficialCalendarDays() {
+        val currentMonth = """
+            {
+              "code":0,
+              "data":{"biz_code":0,"biz_data":[{
+                "currency":"CNY",
+                "days":[
+                  {"date":"2026-08-17","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"PROMPT_CACHE_MISS_TOKEN","amount":"1.25"},
+                    {"type":"RESPONSE_TOKEN","amount":"1.75"},
+                    {"type":"REQUEST","amount":"999"}
+                  ]}]},
+                  {"date":"2026-08-12","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"PROMPT_CACHE_HIT_TOKEN","amount":"4"}
+                  ]}]},
+                  {"date":"2026-08-01","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"RESPONSE_TOKEN","amount":"8"}
+                  ]}]}
+                ]
+              }]}
+            }
+        """.trimIndent()
+        val previousMonth = """
+            {
+              "code":0,
+              "data":{"biz_code":0,"biz_data":[{
+                "currency":"CNY",
+                "days":[
+                  {"date":"2026-07-30","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"RESPONSE_TOKEN","amount":"16"}
+                  ]}]},
+                  {"date":"2026-07-19","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"RESPONSE_TOKEN","amount":"32"}
+                  ]}]},
+                  {"date":"2026-07-18","data":[{"model":"deepseek-chat","usage":[
+                    {"type":"RESPONSE_TOKEN","amount":"64"}
+                  ]}]}
+                ]
+              }]}
+            }
+        """.trimIndent()
 
-        assertEquals(10.0, BudgetMath.spentInWindow(events, now, 24 * hour), 0.0001)
-        assertEquals(20.0, BudgetMath.spentInWindow(events, now, 7 * 24 * hour), 0.0001)
+        val costs = DeepSeekDailyCostApi.parse(
+            listOf(previousMonth, currentMonth),
+            LocalDate.of(2026, 8, 17),
+            "CNY",
+        )
+
+        assertEquals(3.0, costs.today, 0.0001)
+        assertEquals(7.0, costs.last7Days, 0.0001)
+        assertEquals(63.0, costs.last30Days, 0.0001)
+        assertEquals(listOf(YearMonth.of(2026, 7), YearMonth.of(2026, 8)),
+            DeepSeekDailyCostApi.requiredMonths(LocalDate.of(2026, 8, 17)))
     }
 
     @Test
     fun budgetPercentCanExceedOneHundred() {
         val budget = BudgetWindow(
-            label = "24H 预算",
+            label = "今日预算",
             spent = 13.5,
             limit = 10.0,
             currency = "CNY",
-            periodSeconds = 86_400,
-            observedSince = 1,
+            periodDays = 1,
         )
 
         assertEquals(135, budget.usedPercent)
+    }
+
+    @Test
+    fun deepSeekDailyCostsRejectExpiredPlatformSessionEnvelope() {
+        val error = runCatching {
+            DeepSeekDailyCostApi.parse(
+                listOf("""{"code":40003,"msg":"Authorization Failed","data":null}"""),
+                LocalDate.of(2026, 8, 17),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(error?.message?.contains("userToken") == true)
     }
 }

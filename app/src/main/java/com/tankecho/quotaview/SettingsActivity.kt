@@ -111,12 +111,19 @@ class SettingsActivity : AppCompatActivity() {
             )
         })
 
-        root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方余额 · 本机预算追踪",
+        root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方余额 · 官方日账单预算",
             listOf(
                 FieldDef("deepseek_key", "API key", "platform.deepseek.com 的 API key", secret = true),
-                FieldDef("deepseek_budget_24h", "24H 预算", "例如 20；留空则不显示", required = false, numeric = true),
-                FieldDef("deepseek_budget_7d", "7D 预算", "例如 100；留空则不显示", required = false, numeric = true),
-                FieldDef("deepseek_budget_30d", "30D 预算", "例如 300；留空则不显示", required = false, numeric = true),
+                FieldDef(
+                    "deepseek_platform_token",
+                    "Platform userToken（预算必填）",
+                    "登录控制台后 localStorage → userToken",
+                    secret = true,
+                    required = false,
+                ),
+                FieldDef("deepseek_budget_24h", "今日预算", "例如 20；留空则不显示", required = false, numeric = true),
+                FieldDef("deepseek_budget_7d", "近 7 日预算", "例如 100；留空则不显示", required = false, numeric = true),
+                FieldDef("deepseek_budget_30d", "近 30 日预算", "例如 300；留空则不显示", required = false, numeric = true),
             ), defaultEnabled = false) {
             DeepSeekApi.fetch(prefs.getString("deepseek_key", "").orEmpty())
         })
@@ -196,7 +203,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (id == "deepseek") {
             body.addView(TextView(this).apply {
-                text = "预算金额与账户余额币种一致。支出按本机余额采样估算；充值只更新余额基线，不冲减已观测支出。"
+                text = "预算金额与余额币种一致，消费来自 DeepSeek Platform 官方日账单。API key 只能读取余额；预算还需要网页登录态 userToken。电脑端登录控制台后，可在开发者工具 Console 执行 localStorage.getItem('userToken') 获取。"
                 textSize = 12f
                 setTextColor(0xFF6F7482.toInt())
                 layoutParams = LinearLayout.LayoutParams(
