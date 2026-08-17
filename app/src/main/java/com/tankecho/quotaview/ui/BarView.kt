@@ -10,11 +10,10 @@ import android.graphics.drawable.GradientDrawable
 import android.view.View
 
 /**
- * 折叠态竖条 v2: 三层结构.
+ * 折叠态竖条 v3: 两层结构.
  *
  * 1. 半透明黑填充 (贴屏侧直角, 外侧圆角)
- * 2. 1dp 深色半透明外框 (只描 顶+外侧+底 三边, 贴屏侧开放)
- * 3. 用量进度描边: 在外框内部, 沿同样三边路径 — 健康色=已用, 暗色轨道=剩余
+ * 2. 用量进度描边: 沿顶+外侧+底三边 — 健康色=已用, 暗色轨道=剩余
  */
 class BarView(context: Context) : View(context) {
 
@@ -23,9 +22,6 @@ class BarView(context: Context) : View(context) {
     var attachRight = true          // true=贴右缘 (贴屏侧=右边, 无边框)
 
     private val fillDrawable = GradientDrawable().apply { setColor(0x66000000) }
-    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = 0x99 shl 24
-    }
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.BUTT; color = (0x70 shl 24) or 0xB4B9C6
     }
@@ -77,13 +73,8 @@ class BarView(context: Context) : View(context) {
         fillDrawable.setBounds(0, 0, width, height)
         fillDrawable.draw(canvas)
 
-        // 2. 1dp 深色外框 (三边)
-        borderPaint.strokeWidth = 1 * d
-        openPath(tmp, w, h, 0f, borderPaint.strokeWidth, r)
-        canvas.drawPath(tmp, borderPaint)
-
-        // 3. 用量进度描边 (外框内部, 三边路径)
-        val inset = 2 * d
+        // 2. 用量进度描边；不再额外绘制最外围黑色边框。
+        val inset = 1 * d
         val stroke = 2.1f * d
         trackPaint.strokeWidth = stroke
         usedPaint.strokeWidth = stroke

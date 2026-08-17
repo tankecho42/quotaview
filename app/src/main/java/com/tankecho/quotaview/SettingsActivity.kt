@@ -3,7 +3,6 @@ package com.tankecho.quotaview
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -57,6 +56,12 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        if (!prefs.contains("overlay_enabled")) {
+            prefs.edit()
+                .putBoolean("overlay_enabled", prefs.getBoolean("island_enabled", false))
+                .remove("island_enabled")
+                .apply()
+        }
         if (!prefs.contains("minimax_region")) prefs.edit().putString("minimax_region", "cn").apply()
 
         supportActionBar?.hide()
@@ -140,9 +145,9 @@ class SettingsActivity : AppCompatActivity() {
             "官方目前没有开放可查询剩余额度的 API；仅能在控制台查看，QuotaView 不会用本地估算冒充真实额度。",
         ))
 
-        // ---------- 灵动岛配置 ----------
-        root.addView(sectionLabel("LIVE RING · 悬浮窗"))
-        root.addView(liveRingCard(prefs))
+        // ---------- 悬浮窗配置 ----------
+        root.addView(sectionLabel("OVERLAY · 悬浮窗"))
+        root.addView(overlayCard(prefs))
 
         root.addView(sectionLabel("ABOUT"))
         root.addView(footer())
@@ -163,8 +168,8 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (::prefs.isInitialized && prefs.getBoolean("island_enabled", false)) {
-            startService(Intent(this, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+        if (::prefs.isInitialized && prefs.getBoolean("overlay_enabled", false)) {
+            startService(Intent(this, OverlayService::class.java).setAction(OverlayService.ACTION_REFRESH))
         }
     }
 
@@ -307,8 +312,8 @@ class SettingsActivity : AppCompatActivity() {
                             ringPreview.centerText = if (ringPreview.iconRes == 0) providerInitial(fallback) else null
                             refreshRingPreview(prefs)
                         }
-                        if (prefs.getBoolean("island_enabled", false)) {
-                            startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                        if (prefs.getBoolean("overlay_enabled", false)) {
+                            startService(Intent(this@SettingsActivity, OverlayService::class.java).setAction(OverlayService.ACTION_REFRESH))
                         }
                     }
                 }
@@ -391,7 +396,7 @@ class SettingsActivity : AppCompatActivity() {
         rebuild()
     }
 
-    // ---------- 灵动岛配置卡片 ----------
+    // ---------- 悬浮窗配置卡片 ----------
 
     private val standardWindowOptions = listOf("主窗口" to "primary", "周窗口" to "week", "MCP 工具" to "mcp")
 
@@ -413,7 +418,7 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun liveRingCard(prefs: SharedPreferences): LinearLayout {
+    private fun overlayCard(prefs: SharedPreferences): LinearLayout {
         val card = section("", "")
         card.removeAllViews()
 
@@ -424,33 +429,27 @@ class SettingsActivity : AppCompatActivity() {
             textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        val islandSwitch = SwitchCompat(this).apply {
-            isChecked = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_enabled", false)
+        val overlaySwitch = SwitchCompat(this).apply {
+            isChecked = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("overlay_enabled", false)
         }
-        titleRow.addView(islandSwitch)
+        titleRow.addView(overlaySwitch)
         card.addView(titleRow)
-        islandSwitch.setOnCheckedChangeListener { _, checked ->
+        overlaySwitch.setOnCheckedChangeListener { _, checked ->
             val prefs = getSharedPreferences("qv", MODE_PRIVATE)
             if (checked) {
                 if (!android.provider.Settings.canDrawOverlays(this)) {
                     Toast.makeText(this, "请先允许「显示在其他应用上层」权限", Toast.LENGTH_LONG).show()
                     startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:$packageName")))
-                    islandSwitch.isChecked = false
-                } else if (Build.VERSION.SDK_INT >= 33 &&
-                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
-                    islandSwitch.isChecked = false
-                    Toast.makeText(this, "请先允许通知权限", Toast.LENGTH_LONG).show()
+                    overlaySwitch.isChecked = false
                 } else {
-                    prefs.edit().putBoolean("island_enabled", true).apply()
-                    ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java))
-                    Toast.makeText(this, "悬浮圆环已启动", Toast.LENGTH_SHORT).show()
+                    prefs.edit().putBoolean("overlay_enabled", true).apply()
+                    ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java))
+                    Toast.makeText(this, "悬浮窗已启动；横屏时自动隐藏", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                prefs.edit().putBoolean("island_enabled", false).apply()
-                val serviceIntent = Intent(this, IslandService::class.java)
+                prefs.edit().putBoolean("overlay_enabled", false).apply()
+                val serviceIntent = Intent(this, OverlayService::class.java)
                 stopService(serviceIntent)
             }
         }
@@ -476,7 +475,7 @@ class SettingsActivity : AppCompatActivity() {
         legend.addView(outerLegend)
         legend.addView(innerLegend)
         legend.addView(TextView(this).apply {
-            text = "开屏即见, 无需打开 App"
+            text = "竖屏常驻 · 横屏自动隐藏"
             textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
         })
@@ -496,8 +495,8 @@ class SettingsActivity : AppCompatActivity() {
             options.forEach { (name, key) ->
                 winRow.addView(makeChip(name, key == active) {
                     prefs.edit().putString("ring_window", key).apply()
-                    if (prefs.getBoolean("island_enabled", false)) {
-                        startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                    if (prefs.getBoolean("overlay_enabled", false)) {
+                        startService(Intent(this@SettingsActivity, OverlayService::class.java).setAction(OverlayService.ACTION_REFRESH))
                     }
                     rebuildWindowRow()
                     refreshRingPreview(prefs)
@@ -529,8 +528,8 @@ class SettingsActivity : AppCompatActivity() {
                             if (options.none { it.second == currentWindow }) {
                                 prefs.edit().putString("ring_window", options.first().second).apply()
                             }
-                            if (prefs.getBoolean("island_enabled", false)) {
-                                startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                            if (prefs.getBoolean("overlay_enabled", false)) {
+                                startService(Intent(this@SettingsActivity, OverlayService::class.java).setAction(OverlayService.ACTION_REFRESH))
                             }
                             ringPreview.iconRes = providerIcon(id)
                             ringPreview.centerText = if (ringPreview.iconRes == 0) providerInitial(id) else null

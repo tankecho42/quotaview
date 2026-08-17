@@ -7,6 +7,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.res.Configuration
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -45,7 +46,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 灵动岛 v5: 三态悬浮窗.
+ * 三态额度悬浮窗.
  *
  * BAR    平常态: 贴边半透明胶囊长条 (颜色=健康度), 宽触摸热区, 可拖动, 松手吸边
  * RING   轻点长条: 长条消失, 圆环从吸附侧滑出; 圆环可拖动 + 吸边; 拖到屏幕边缘松手 → 滑回收缩
@@ -54,7 +55,7 @@ import java.util.Locale
  *
  * 数据: 每 5 分钟自动轮询刷新 (无需打开 App)
  */
-class IslandService : Service() {
+class OverlayService : Service() {
 
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(serviceJob + Dispatchers.Main.immediate)
@@ -116,23 +117,49 @@ class IslandService : Service() {
         super.onDestroy()
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        handler.removeCallbacks(ringTimeout)
+        if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            detachAll()
+        } else {
+            if (canShowOverlay() && barHost == null && ringView == null && detailView == null) attachBar()
+            requestRefresh()
+        }
+    }
+
     // ---------- 前台服务 (静默载体, 保轮询存活) ----------
 
     private fun startForegroundQuiet() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val ch = NotificationChannel(CHANNEL_ID, "悬浮窗", NotificationManager.IMPORTANCE_LOW)
+        nm.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+        val ch = NotificationChannel(CHANNEL_ID, "悬浮窗后台服务", NotificationManager.IMPORTANCE_LOW)
         ch.setShowBadge(false); ch.setSound(null, null)
         nm.createNotificationChannel(ch)
-        startForeground(NOTI_ID, Notification.Builder(this, CHANNEL_ID)
+        val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("QuotaView 悬浮窗运行中")
+            .setContentTitle("QuotaView 悬浮窗")
+            .setContentText("正在后台刷新额度")
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(android.app.PendingIntent.getActivity(
                 this, 0, Intent(this, MainActivity::class.java),
                 android.app.PendingIntent.FLAG_IMMUTABLE))
-            .build())
+            .apply {
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_DEFERRED)
+                }
+            }
+            .build()
+        startForeground(NOTI_ID, notification)
     }
+
+    private fun canShowOverlay(): Boolean =
+        !shuttingDown &&
+            resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE &&
+            android.provider.Settings.canDrawOverlays(this)
 
     // ---------- BAR: 贴边胶囊长条 (宽热区容器) ----------
 
@@ -150,7 +177,7 @@ class IslandService : Service() {
         }
 
     private fun attachBar() {
-        if (shuttingDown) return
+        if (!canShowOverlay()) return
         if (attachingBar) return   // 防重入 (并发 refreshData 双 attach)
         attachingBar = true
         try {
@@ -270,7 +297,7 @@ class IslandService : Service() {
         val hostY = (anchorY - hostH / 2).coerceIn(0, (screenH - hostH).coerceAtLeast(0))
         val side = if (params.x < screenW / 2) "left" else "right"
         val hostX = if (side == "left") 0 else screenW - hostW
-        val bv = com.tankecho.quotaview.ui.BarView(this@IslandService).apply {
+        val bv = com.tankecho.quotaview.ui.BarView(this@OverlayService).apply {
             usedPercent = currentWindow?.usedPercent?.toFloat() ?: 0f
             healthColor = healthColor(currentWindow)
             attachRight = (side == "right")
@@ -329,8 +356,7 @@ class IslandService : Service() {
     }
 
     private fun showRing(fromLeft: Boolean) {
-        if (shuttingDown) return
-        if (!android.provider.Settings.canDrawOverlays(this)) return
+        if (!canShowOverlay()) return
         if (ringView != null) return
         val bp = barParams ?: return
         // 统一锚点: ring 中心 = bar 视觉条中心 (host y + barH/2)
@@ -444,7 +470,7 @@ class IslandService : Service() {
 
     private fun hideRing() {
         if (shuttingDown) return
-        val rv = ringView ?: run { if (barHost == null) attachBar(); return }
+        val rv = ringView ?: run { if (barHost == null && canShowOverlay()) attachBar(); return }
         val p = ringParams ?: return
         val target = if (p.x < screenW / 2) -ringSize else screenW
         ValueAnimator.ofInt(p.x, target).apply {
@@ -455,7 +481,7 @@ class IslandService : Service() {
             }
             doOnEnd {
                 detachRing()
-                if (!shuttingDown && android.provider.Settings.canDrawOverlays(this@IslandService) && barHost == null) attachBar()
+                if (canShowOverlay() && barHost == null) attachBar()
             }
             start()
         }
@@ -469,7 +495,7 @@ class IslandService : Service() {
     // ---------- DETAIL: 详情卡 (点外部自动收回) ----------
 
     private fun showDetail() {
-        if (shuttingDown) return
+        if (!canShowOverlay()) return
         if (detailView != null) return
         handler.removeCallbacks(ringTimeout)
         val win = currentWindow
@@ -667,7 +693,7 @@ class IslandService : Service() {
         val windows = st?.meterWindows().orEmpty()
         if (st == null || st.error != null || windows.isEmpty()) {
             // 数据失败时保留最后一次有效值；首次启动仍显示占位，不能让窗口消失。
-            if (android.provider.Settings.canDrawOverlays(this)) {
+            if (canShowOverlay()) {
                 if (barHost == null && ringView == null && detailView == null) attachBar()
             }
             return
@@ -678,7 +704,7 @@ class IslandService : Service() {
         val win = windows.firstOrNull { it.selectionKey == winKey } ?: windows.firstOrNull()
         currentWindow = win
 
-        if (android.provider.Settings.canDrawOverlays(this)) {
+        if (canShowOverlay()) {
             // ring/detail 展示期间不重建 bar (bar 由 hideRing 收缩时重建)
             if (barHost == null && ringView == null && detailView == null) attachBar()
             (barShape as? com.tankecho.quotaview.ui.BarView)?.let {
@@ -740,7 +766,8 @@ class IslandService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "qv_island"
+        const val CHANNEL_ID = "qv_overlay"
+        private const val LEGACY_CHANNEL_ID = "qv_island"
         const val NOTI_ID = 1001
         const val ACTION_STOP = "stop"
         const val ACTION_REFRESH = "refresh"

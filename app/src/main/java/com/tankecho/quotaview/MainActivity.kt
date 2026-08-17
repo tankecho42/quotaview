@@ -61,14 +61,20 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        if (!prefs.contains("overlay_enabled")) {
+            prefs.edit()
+                .putBoolean("overlay_enabled", prefs.getBoolean("island_enabled", false))
+                .remove("island_enabled")
+                .apply()
+        }
         // v0.13.3 起改用 DeepSeek 官方日账单，清除旧版余额差估算历史。
         if (prefs.contains("deepseek_budget_history_v1")) {
             prefs.edit().remove("deepseek_budget_history_v1").apply()
         }
 
-        // 灵动岛: 按持久化开关恢复服务
-        if (prefs.getBoolean("island_enabled", false)) {
-            runCatching { ContextCompat.startForegroundService(this, Intent(this, IslandService::class.java)) }
+        // 悬浮窗: 按持久化开关恢复后台服务
+        if (prefs.getBoolean("overlay_enabled", false)) {
+            runCatching { ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java)) }
         }
 
         swipe = SwipeRefreshLayout(this)
