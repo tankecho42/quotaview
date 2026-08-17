@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.EditText
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -17,6 +18,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
@@ -26,6 +29,8 @@ import com.tankecho.quotaview.data.DeepSeekBudgetStatus
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
+import com.tankecho.quotaview.data.ProviderMetricOption
+import com.tankecho.quotaview.data.ProviderMetrics
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.ProviderIcons
@@ -142,7 +147,18 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(sectionLabel("ABOUT"))
         root.addView(footer())
 
-        setContentView(ScrollView(this).apply { addView(root) })
+        val content = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            clipToPadding = false
+            addView(root)
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(0, bars.top, 0, bars.bottom)
+            insets
+        }
+        setContentView(content)
+        ViewCompat.requestApplyInsets(content)
     }
 
     override fun onPause() {
@@ -169,8 +185,6 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
         }
 
-        val hasConfig = fields.any { !prefs.getString(it.key, "").isNullOrBlank() }
-
         // header row: logo + 标题列 + chevron + switch
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -191,7 +205,7 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
         val chevron = TextView(this).apply {
-            text = if (hasConfig) "▾" else "▾"; textSize = 15f; setTextColor(0xFF8A8F9E.toInt())
+            text = "▸"; textSize = 15f; setTextColor(0xFF8A8F9E.toInt())
             setPadding(dp(10), dp(2), dp(10), dp(2))
         }
         val sw = SwitchCompat(this).apply {
@@ -211,6 +225,7 @@ class SettingsActivity : AppCompatActivity() {
             body.addView(fieldLabel(f.label))
             body.addView(input(prefs, f.key, f.hint, f.multiline, f.secret, f.numeric))
         }
+        addHomeMetricSelector(body, prefs, id)
         if (id == "deepseek") {
             body.addView(TextView(this).apply {
                 text = "预算金额与余额币种一致，消费来自 DeepSeek Platform 官方日账单。API key 只能读取余额；预算还需要网页登录态 userToken。电脑端登录控制台后，可在开发者工具 Console 执行 localStorage.getItem('userToken') 获取。"
@@ -247,7 +262,7 @@ class SettingsActivity : AppCompatActivity() {
             })
         }
         card.addView(body)
-        if (!hasConfig) body.visibility = View.GONE else chevron.text = "▾"
+        body.visibility = View.GONE
 
         headerRow.setOnClickListener {
             body.visibility = if (body.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -320,16 +335,60 @@ class SettingsActivity : AppCompatActivity() {
             text = subtitle; textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
         })
         row.addView(titles)
+        val chevron = TextView(this).apply {
+            text = "▸"; textSize = 15f; setTextColor(0xFF8A8F9E.toInt())
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+        }
+        row.addView(chevron)
         row.addView(TextView(this).apply {
             text = "待开放"; textSize = 11f; setTextColor(0xFFF5A524.toInt())
             setPadding(dp(8), dp(3), dp(8), dp(3))
         })
         card.addView(row)
-        card.addView(TextView(this).apply {
+        val reasonView = TextView(this).apply {
             text = reason; textSize = 12f; setTextColor(0xFF8A8F9E.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
-        })
+            visibility = View.GONE
+        }
+        card.addView(reasonView)
+        row.setOnClickListener {
+            reasonView.visibility = if (reasonView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            chevron.text = if (reasonView.visibility == View.VISIBLE) "▾" else "▸"
+        }
         return card
+    }
+
+    private fun homeMetricOptions(providerId: String): List<ProviderMetricOption> {
+        return ProviderMetrics.options(providerId)
+    }
+
+    /** 每个 Provider 单独保存主页圆环主指标，不影响悬浮窗 ring_window。 */
+    private fun addHomeMetricSelector(body: LinearLayout, prefs: SharedPreferences, providerId: String) {
+        val options = homeMetricOptions(providerId)
+        if (options.isEmpty()) return
+        body.addView(fieldLabel("主页圆环主指标"))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun rebuild() {
+            val prefKey = "home_metric_$providerId"
+            val saved = prefs.getString(prefKey, options.first().key) ?: options.first().key
+            val active = saved.takeIf { key -> options.any { it.key == key } } ?: options.first().key
+            if (active != saved) prefs.edit().putString(prefKey, active).apply()
+            row.removeAllViews()
+            options.forEach { option ->
+                row.addView(makeChip(option.label, option.key == active) {
+                    prefs.edit().putString(prefKey, option.key).apply()
+                    rebuild()
+                })
+            }
+        }
+        body.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(6) })
+        rebuild()
     }
 
     // ---------- 灵动岛配置卡片 ----------
@@ -726,17 +785,11 @@ class SettingsActivity : AppCompatActivity() {
         addView(LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(TextView(this@SettingsActivity).apply {
-                text = "Q"
-                textSize = 17f
-                gravity = Gravity.CENTER
-                setTextColor(0xFFFFFFFF.toInt())
-                paint.isFakeBoldText = true
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(0xFF6276E9.toInt())
-                    cornerRadius = dp(11).toFloat()
-                }
-                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { rightMargin = dp(11) }
+            addView(ImageView(this@SettingsActivity).apply {
+                setImageResource(R.mipmap.ic_launcher)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = "QuotaView app icon"
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(11) }
             })
             addView(LinearLayout(this@SettingsActivity).apply {
                 orientation = LinearLayout.VERTICAL

@@ -258,6 +258,24 @@ class ProvidersTest {
         assertEquals(listOf("budget_today", "budget_7d", "budget_30d"), windows.map { it.selectionKey })
         assertEquals(listOf(135, 42, 40), windows.map { it.usedPercent })
         assertEquals(listOf(0, 0, 0), windows.map { it.timeElapsedPercent })
+        assertEquals(42, ProviderMetrics.select(status, "budget_7d")?.usedPercent)
+        assertEquals(135, ProviderMetrics.select(status, "missing")?.usedPercent)
+    }
+
+    @Test
+    fun providerMetricOptionsAreIndependentPerProvider() {
+        assertEquals(
+            listOf("primary", "week", "additional"),
+            ProviderMetrics.options("codex").map { it.key },
+        )
+        assertEquals(
+            listOf("primary", "week", "mcp"),
+            ProviderMetrics.options("glm").map { it.key },
+        )
+        assertEquals(
+            listOf("budget_today", "budget_7d", "budget_30d"),
+            ProviderMetrics.options("deepseek").map { it.key },
+        )
     }
 
     @Test

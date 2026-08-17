@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.View
 import androidx.appcompat.content.res.AppCompatResources
 
@@ -28,6 +29,12 @@ class DualRingView @JvmOverloads constructor(
             invalidate()
         }
     var centerText: String? = null
+    var centerTextSizeSp: Float = 13f
+        set(value) {
+            field = value
+            textPaint.textSize = sp(value)
+            invalidate()
+        }
     /** 悬浮圆环场景: 纯黑半透明圆底 (叠加在内容下层); 详情卡场景不设 */
     var bgColor: Int? = null
 
@@ -44,12 +51,18 @@ class DualRingView @JvmOverloads constructor(
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFE6E8EE.toInt(); textAlign = Paint.Align.CENTER
-        textSize = resources.displayMetrics.density * 13
+        textSize = sp(13f)
         isFakeBoldText = true
     }
 
     private val oval = RectF()
     private var iconDrawable: Drawable? = null
+
+    private fun sp(value: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        value,
+        resources.displayMetrics,
+    )
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)

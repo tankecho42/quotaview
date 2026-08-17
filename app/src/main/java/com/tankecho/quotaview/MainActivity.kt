@@ -1,15 +1,20 @@
 package com.tankecho.quotaview
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Space
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.tankecho.quotaview.data.CodexApi
@@ -20,12 +25,12 @@ import com.tankecho.quotaview.data.DeepSeekBudgetStatus
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
+import com.tankecho.quotaview.data.ProviderMetrics
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
-import android.content.Intent
-import androidx.core.content.ContextCompat
-import com.tankecho.quotaview.ui.RaceBars
+import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
+import com.tankecho.quotaview.ui.RaceBars
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -45,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var scroll: ScrollView
     private var settingsOpen = false
+    private var lastStatuses: List<ProviderStatus> = emptyList()
     private val collapsed = mutableSetOf<String>()
     private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         settingsOpen = false
@@ -150,11 +156,20 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF101218.toInt())
+        }
         outer.addView(header)
         outer.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        ViewCompat.setOnApplyWindowInsetsListener(outer) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(0, bars.top, 0, bars.bottom)
+            insets
+        }
         swipe.addView(outer)
         setContentView(swipe)
+        ViewCompat.requestApplyInsets(outer)
     }
 
     override fun onResume() {
@@ -214,7 +229,9 @@ class MainActivity : AppCompatActivity() {
     // ---------- 渲染 ----------
 
     private fun render(statuses: List<ProviderStatus>) {
+        lastStatuses = statuses
         root.removeAllViews()
+        root.addView(homeViewSwitcher())
 
         val visible = statuses.filter { prefs.getBoolean("show_${it.id}", it.id == "codex" || it.id == "glm") }
         if (visible.isEmpty()) {
@@ -225,7 +242,11 @@ class MainActivity : AppCompatActivity() {
         val fmtReset = SimpleDateFormat("M/d HH:mm", Locale.getDefault())
         val fmtUpd = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-        visible.forEach { st -> root.addView(providerSection(st, fmtReset)) }
+        if (prefs.getString("home_view_style", "list") == "cards") {
+            root.addView(providerRingGrid(visible))
+        } else {
+            visible.forEach { st -> root.addView(providerSection(st, fmtReset)) }
+        }
 
         val updated = statuses.maxOfOrNull { it.updatedAt } ?: 0
         root.addView(tv("更新于 ${fmtUpd.format(Date(updated * 1000))} · 下拉刷新", 12, 0xFF5A5F6E.toInt()))
@@ -247,6 +268,170 @@ class MainActivity : AppCompatActivity() {
                 12, 0xFF5A5F6E.toInt()))
             root.addView(card, vlp(top = 10, bottom = 10))
         }
+    }
+
+    /** 一键切换主页 Provider 展示：原有折叠列表 / 圆环卡片。 */
+    private fun homeViewSwitcher(): View {
+        val active = prefs.getString("home_view_style", "list") ?: "list"
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(4), dp(2))
+            addView(TextView(this@MainActivity).apply {
+                text = "主页视图"
+                textSize = 12f
+                setTextColor(0xFF697184.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            listOf("折叠列表" to "list", "圆环卡片" to "cards").forEach { (label, key) ->
+                addView(TextView(this@MainActivity).apply {
+                    text = label
+                    textSize = 12.5f
+                    gravity = Gravity.CENTER
+                    setTextColor(if (key == active) 0xFFFFFFFF.toInt() else 0xFF8A91A1.toInt())
+                    setPadding(dp(12), dp(7), dp(12), dp(7))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(if (key == active) 0xFF5F73E8.toInt() else 0xFF1B1F28.toInt())
+                        cornerRadius = dp(16).toFloat()
+                        setStroke(dp(1), if (key == active) 0xFF7487F2.toInt() else 0xFF2A303C.toInt())
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { leftMargin = dp(7) }
+                    setOnClickListener {
+                        if (key != active) {
+                            prefs.edit().putString("home_view_style", key).apply()
+                            render(lastStatuses)
+                        }
+                    }
+                })
+            }
+        }
+    }
+
+    /** 手机单列，宽屏三列；每张卡只使用圆环作为进度可视化。 */
+    private fun providerRingGrid(statuses: List<ProviderStatus>): View {
+        val columns = if (resources.configuration.screenWidthDp >= 720) 3 else 1
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        statuses.chunked(columns).forEach { group ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.TOP
+            }
+            group.forEach { status ->
+                row.addView(providerRingCard(status, compact = columns > 1), LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f,
+                ).apply {
+                    leftMargin = dp(4)
+                    rightMargin = dp(4)
+                    topMargin = dp(8)
+                    bottomMargin = dp(4)
+                })
+            }
+            repeat(columns - group.size) {
+                row.addView(Space(this), LinearLayout.LayoutParams(0, 1, 1f).apply {
+                    leftMargin = dp(4)
+                    rightMargin = dp(4)
+                })
+            }
+            container.addView(row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+        return container
+    }
+
+    private fun providerRingCard(st: ProviderStatus, compact: Boolean): View {
+        val selectedKey = prefs.getString("home_metric_${st.id}", null)
+        val metric = ProviderMetrics.select(st, selectedKey)
+        val ringSize = dp(if (compact) 112 else 148)
+        return card().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(if (compact) 10 else 16), dp(14), dp(if (compact) 10 else 16), dp(14))
+
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(providerMark(st.id, 20).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(8) }
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = st.name
+                    textSize = if (compact) 14f else 16f
+                    setTextColor(0xFFF2F3F7.toInt())
+                    paint.isFakeBoldText = true
+                    maxLines = 1
+                })
+            })
+
+            addView(DualRingView(this@MainActivity).apply {
+                usedPercent = metric?.usedPercent?.toFloat() ?: 0f
+                timeElapsedPercent = metric?.timeElapsedPercent?.toFloat() ?: 0f
+                ringColor = metricHealthColor(metric)
+                iconRes = 0
+                centerText = metric?.usedPercent?.let { if (it > 999) "999%+" else "$it%" } ?: "—"
+                centerTextSizeSp = if (compact) 18f else 22f
+            }, LinearLayout.LayoutParams(ringSize, ringSize).apply { topMargin = dp(10) })
+
+            addView(TextView(this@MainActivity).apply {
+                text = when {
+                    st.error != null -> "请求失败"
+                    metric != null -> metric.label
+                    else -> "暂无可用指标"
+                }
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(if (st.error != null) 0xFFE5484D.toInt() else 0xFFD9DDEA.toInt())
+                paint.isFakeBoldText = true
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(7) }
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = ringMetricDetail(st, metric)
+                textSize = 11.5f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF737B8C.toInt())
+                maxLines = 2
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(4) }
+            })
+        }
+    }
+
+    private fun ringMetricDetail(st: ProviderStatus, metric: QuotaWindow?): String {
+        if (st.error != null) return st.error
+        if (metric == null) return "请在设置中配置并选择主页圆环指标"
+        if (metric.selectionKey.startsWith("budget_")) {
+            val days = when (metric.selectionKey) {
+                "budget_today" -> 1
+                "budget_7d" -> 7
+                else -> 30
+            }
+            val budget = st.budgets.firstOrNull { it.periodDays == days }
+            return if (budget == null) "预算数据尚未返回" else
+                "${formatBalance(budget.spent, budget.currency)} / ${formatBalance(budget.limit, budget.currency)}"
+        }
+        val elapsed = metric.timeElapsedPercent.takeIf { it > 0 }?.let { " · 已过 $it%" }.orEmpty()
+        return "已用 ${metric.usedPercent}%$elapsed"
+    }
+
+    private fun metricHealthColor(metric: QuotaWindow?): Int = when {
+        metric == null -> 0xFF6E8BFF.toInt()
+        metric.selectionKey.startsWith("budget_") && metric.usedPercent >= 100 -> 0xFFE5484D.toInt()
+        metric.selectionKey.startsWith("budget_") && metric.usedPercent >= 80 -> 0xFFF5A524.toInt()
+        metric.selectionKey.startsWith("budget_") -> 0xFF46A758.toInt()
+        metric.pace == null -> 0xFF6E8BFF.toInt()
+        metric.pace!! > 1.5f -> 0xFFE5484D.toInt()
+        metric.pace!! > 1f -> 0xFFF5A524.toInt()
+        else -> 0xFF46A758.toInt()
     }
 
     /** provider 可折叠分区: header(icon+名称+⚙+chevron) + body(窗口列表) */
