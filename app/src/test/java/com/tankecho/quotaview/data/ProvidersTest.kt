@@ -240,6 +240,27 @@ class ProvidersTest {
     }
 
     @Test
+    fun deepSeekBudgetsBecomeStableFloatingWindowOptions() {
+        val status = ProviderStatus(
+            id = "deepseek",
+            name = "DeepSeek",
+            plan = "API",
+            windows = emptyList(),
+            updatedAt = 0,
+            budgets = listOf(
+                BudgetWindow("今日预算", 13.5, 10.0, "CNY", 1),
+                BudgetWindow("近 7 日预算", 42.0, 100.0, "CNY", 7),
+                BudgetWindow("近 30 日预算", 120.0, 300.0, "CNY", 30),
+            ),
+        )
+
+        val windows = status.meterWindows()
+        assertEquals(listOf("budget_today", "budget_7d", "budget_30d"), windows.map { it.selectionKey })
+        assertEquals(listOf(135, 42, 40), windows.map { it.usedPercent })
+        assertEquals(listOf(0, 0, 0), windows.map { it.timeElapsedPercent })
+    }
+
+    @Test
     fun deepSeekDailyCostsRejectExpiredPlatformSessionEnvelope() {
         val error = runCatching {
             DeepSeekDailyCostApi.parse(

@@ -45,6 +45,53 @@ data class DeepSeekDailyCosts(
     }
 }
 
+/** 统一主界面、设置预览和悬浮窗的 DeepSeek 数据装配，避免各入口刷新行为不一致。 */
+object DeepSeekBudgetStatus {
+    suspend fun fetch(
+        apiKey: String,
+        platformToken: String,
+        limits: DeepSeekBudgetLimits,
+    ): ProviderStatus {
+        val status = DeepSeekApi.fetch(apiKey)
+        return when {
+            status.error != null || !limits.isConfigured -> status
+            platformToken.isBlank() -> status.copy(
+                detailMessage = "填写 Platform userToken 后显示官方日账单预算",
+            )
+            else -> try {
+                val costs = DeepSeekDailyCostApi.fetch(
+                    platformToken,
+                    status.balances.firstOrNull()?.currency,
+                )
+                status.copy(
+                    budgets = costs.budgetWindows(limits),
+                    detailMessage = "DeepSeek Platform 官方日账单 · 按自然日汇总",
+                )
+            } catch (e: Exception) {
+                status.copy(
+                    detailMessage = "官方日账单读取失败：${e.message ?: "未知错误"}",
+                    detailMessageIsError = true,
+                )
+            }
+        }
+    }
+}
+
+/** 悬浮窗沿用统一窗口模型；自然日预算没有时间进度内环。 */
+fun ProviderStatus.meterWindows(): List<QuotaWindow> = if (windows.isNotEmpty()) windows else budgets.map { budget ->
+    QuotaWindow(
+        label = budget.label.removeSuffix("预算").trim(),
+        usedPercent = budget.usedPercent,
+        resetAt = 0,
+        windowSeconds = 0,
+        selectionKey = when (budget.periodDays) {
+            1 -> "budget_today"
+            7 -> "budget_7d"
+            else -> "budget_30d"
+        },
+    )
+}
+
 /** DeepSeek Platform 控制台的官方日账单接口；需要网页登录态 userToken，API key 无权访问。 */
 object DeepSeekDailyCostApi {
     private const val COST_URL = "https://platform.deepseek.com/api/v0/usage/cost"

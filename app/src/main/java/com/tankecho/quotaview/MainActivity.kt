@@ -8,15 +8,15 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.CostSimulator
-import com.tankecho.quotaview.data.DeepSeekApi
 import com.tankecho.quotaview.data.DeepSeekBudgetLimits
-import com.tankecho.quotaview.data.DeepSeekDailyCostApi
+import com.tankecho.quotaview.data.DeepSeekBudgetStatus
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
@@ -43,7 +43,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
     private lateinit var swipe: SwipeRefreshLayout
+    private lateinit var scroll: ScrollView
+    private var settingsOpen = false
     private val collapsed = mutableSetOf<String>()
+    private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        settingsOpen = false
+        refresh()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,31 +68,85 @@ class MainActivity : AppCompatActivity() {
         swipe = SwipeRefreshLayout(this)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(24))
+            setPadding(dp(16), 0, dp(16), dp(24))
             setBackgroundColor(0xFF101218.toInt())
         }
-        val scroll = ScrollView(this).apply { addView(root) }
+        scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            addView(root)
+        }
         swipe.setOnRefreshListener { refresh() }
+        swipe.setOnChildScrollUpCallback { _, _ -> scroll.canScrollVertically(-1) }
+        swipe.setDistanceToTriggerSync(dp(104))
+        swipe.setColorSchemeColors(0xFF8FA3FF.toInt(), 0xFF6E8BFF.toInt())
         supportActionBar?.hide()
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(24), dp(20), 0)
+            setPadding(dp(15), dp(14), dp(12), dp(14))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF1C2130.toInt(), 0xFF171A22.toInt()),
+            ).apply {
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), 0xFF2A3040.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                leftMargin = dp(16); rightMargin = dp(16)
+                topMargin = dp(18); bottomMargin = dp(10)
+            }
         }
         header.addView(TextView(this).apply {
-            text = "QuotaView"
-            textSize = 24f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+            text = "Q"
+            gravity = Gravity.CENTER
+            textSize = 20f
+            setTextColor(0xFFFFFFFF.toInt())
+            paint.isFakeBoldText = true
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF8FA3FF.toInt(), 0xFF5B6DEB.toInt()),
+            ).apply { cornerRadius = dp(13).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(12) }
+        })
+        header.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = "QuotaView"
+                textSize = 22f
+                setTextColor(0xFFF4F5F8.toInt())
+                paint.isFakeBoldText = true
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "额度与消费，一屏掌握"
+                textSize = 11.5f
+                setTextColor(0xFF8991A3.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) }
+            })
         })
         header.addView(TextView(this).apply {
-            text = "设置"
-            textSize = 14f
-            setTextColor(0xFF8FA3FF.toInt())
+            text = "设置  ›"
+            textSize = 13.5f
+            setTextColor(0xFFDDE2FF.toInt())
             paint.isFakeBoldText = true
-            setPadding(dp(12), dp(8), dp(4), dp(8))
+            gravity = Gravity.CENTER
+            setPadding(dp(13), dp(8), dp(11), dp(8))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF292F43.toInt())
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), 0xFF3A4567.toInt())
+            }
             setOnClickListener {
-                startActivity(android.content.Intent(this@MainActivity, SettingsActivity::class.java))
+                settingsOpen = true
+                settingsLauncher.launch(Intent(this@MainActivity, SettingsActivity::class.java))
             }
         })
 
@@ -97,7 +157,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(swipe)
     }
 
-    override fun onResume() { super.onResume(); refresh() }
+    override fun onResume() {
+        super.onResume()
+        if (!settingsOpen) refresh()
+    }
 
     private fun refresh() {
         refreshJob?.cancel()
@@ -131,34 +194,13 @@ class MainActivity : AppCompatActivity() {
                     async { runCatching {
                         val key = prefs.getString("deepseek_key", "").orEmpty()
                         if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) {
-                            val status = DeepSeekApi.fetch(key)
                             val limits = DeepSeekBudgetLimits.parse(
                                 prefs.getString("deepseek_budget_24h", ""),
                                 prefs.getString("deepseek_budget_7d", ""),
                                 prefs.getString("deepseek_budget_30d", ""),
                             )
                             val platformToken = prefs.getString("deepseek_platform_token", "").orEmpty()
-                            when {
-                                status.error != null || !limits.isConfigured -> status
-                                platformToken.isBlank() -> status.copy(
-                                    detailMessage = "填写 Platform userToken 后显示官方日账单预算",
-                                )
-                                else -> try {
-                                    val costs = DeepSeekDailyCostApi.fetch(
-                                        platformToken,
-                                        status.balances.firstOrNull()?.currency,
-                                    )
-                                    status.copy(
-                                        budgets = costs.budgetWindows(limits),
-                                        detailMessage = "DeepSeek Platform 官方日账单 · 按自然日汇总",
-                                    )
-                                } catch (e: Exception) {
-                                    status.copy(
-                                        detailMessage = "官方日账单读取失败：${e.message ?: "未知错误"}",
-                                        detailMessageIsError = true,
-                                    )
-                                }
-                            }
+                            DeepSeekBudgetStatus.fetch(key, platformToken, limits)
                         } else null
                     }.getOrNull() },
                     ).awaitAll().filterNotNull()

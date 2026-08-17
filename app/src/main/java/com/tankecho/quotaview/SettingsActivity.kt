@@ -7,7 +7,6 @@ import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
-import org.json.JSONObject
 import android.view.View
 import android.widget.EditText
 import android.widget.HorizontalScrollView
@@ -18,15 +17,17 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.forEachIndexed
 import androidx.lifecycle.lifecycleScope
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.DeepSeekApi
+import com.tankecho.quotaview.data.DeepSeekBudgetLimits
+import com.tankecho.quotaview.data.DeepSeekBudgetStatus
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
+import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +38,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private var previewJob: Job? = null
     private lateinit var ringPreview: com.tankecho.quotaview.ui.DualRingView
+    private lateinit var prefs: SharedPreferences
     private data class FieldDef(
         val key: String,
         val label: String,
@@ -49,7 +51,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        prefs = getSharedPreferences("qv", MODE_PRIVATE)
         if (!prefs.contains("minimax_region")) prefs.edit().putString("minimax_region", "cn").apply()
 
         supportActionBar?.hide()
@@ -137,9 +139,17 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(sectionLabel("LIVE RING · 悬浮窗"))
         root.addView(liveRingCard(prefs))
 
-        root.addView(footer(prefs))
+        root.addView(sectionLabel("ABOUT"))
+        root.addView(footer())
 
         setContentView(ScrollView(this).apply { addView(root) })
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::prefs.isInitialized && prefs.getBoolean("island_enabled", false)) {
+            startService(Intent(this, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+        }
     }
 
     // ---------- provider 卡片: 开关 + 内嵌配置 + 打开即验证 ----------
@@ -211,6 +221,30 @@ class SettingsActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                 ).apply { topMargin = dp(10) }
             })
+            body.addView(TextView(this).apply {
+                text = "保存并刷新首页"
+                textSize = 13.5f
+                setTextColor(0xFFFFFFFF.toInt())
+                paint.isFakeBoldText = true
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xFF5F73E8.toInt())
+                    cornerRadius = dp(12).toFloat()
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(12) }
+                setOnClickListener {
+                    if (!sw.isChecked) {
+                        Toast.makeText(this@SettingsActivity, "请先启用 DeepSeek", Toast.LENGTH_SHORT).show()
+                    } else {
+                        setResult(RESULT_OK)
+                        finish()
+                    }
+                }
+            })
         }
         card.addView(body)
         if (!hasConfig) body.visibility = View.GONE else chevron.text = "▾"
@@ -249,7 +283,7 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 prefs.edit().putBoolean("show_$id", false).apply()
                 if (prefs.getString("ring_provider", "codex") == id) {
-                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax")
+                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax", "deepseek")
                         .firstOrNull { it != id && ringProviderReady(prefs, it) }
                     if (fallback != null) {
                         prefs.edit().putString("ring_provider", fallback).apply()
@@ -300,7 +334,25 @@ class SettingsActivity : AppCompatActivity() {
 
     // ---------- 灵动岛配置卡片 ----------
 
-    private val windowOptions = listOf("主窗口" to "primary", "周窗口" to "week", "MCP 工具" to "mcp")
+    private val standardWindowOptions = listOf("主窗口" to "primary", "周窗口" to "week", "MCP 工具" to "mcp")
+
+    private fun deepSeekLimits(prefs: SharedPreferences): DeepSeekBudgetLimits = DeepSeekBudgetLimits.parse(
+        prefs.getString("deepseek_budget_24h", ""),
+        prefs.getString("deepseek_budget_7d", ""),
+        prefs.getString("deepseek_budget_30d", ""),
+    )
+
+    private fun windowOptions(prefs: SharedPreferences, provider: String): List<Pair<String, String>> {
+        if (provider != "deepseek") return standardWindowOptions
+        val limits = deepSeekLimits(prefs)
+        return buildList {
+            if (limits.today > 0) add("今日" to "budget_today")
+            if (limits.last7Days > 0) add("近 7 日" to "budget_7d")
+            if (limits.last30Days > 0) add("近 30 日" to "budget_30d")
+        }.ifEmpty {
+            listOf("今日" to "budget_today", "近 7 日" to "budget_7d", "近 30 日" to "budget_30d")
+        }
+    }
 
     private fun liveRingCard(prefs: SharedPreferences): LinearLayout {
         val card = section("", "")
@@ -355,13 +407,15 @@ class SettingsActivity : AppCompatActivity() {
         }
         previewWrap.addView(ringPreview, LinearLayout.LayoutParams(dp(120), dp(120)).apply { rightMargin = dp(20) })
         val legend = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        legend.addView(TextView(this).apply {
+        val outerLegend = TextView(this).apply {
             text = "外环 · 额度用量"; textSize = 13f; setTextColor(0xFF8FA3FF.toInt()); paint.isFakeBoldText = true
-        })
-        legend.addView(TextView(this).apply {
+        }
+        val innerLegend = TextView(this).apply {
             text = "内环 · 时间进度"; textSize = 13f; setTextColor(0xFF9BA1B0.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-        })
+        }
+        legend.addView(outerLegend)
+        legend.addView(innerLegend)
         legend.addView(TextView(this).apply {
             text = "开屏即见, 无需打开 App"
             textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
@@ -372,7 +426,30 @@ class SettingsActivity : AppCompatActivity() {
             topMargin = dp(12); bottomMargin = dp(4)
         })
 
-        // Provider 选择 (icon + 名称 的胶囊单选; 重建函数统一管理, 不搞闭包转发)
+        val winRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun rebuildWindowRow() {
+            val provider = prefs.getString("ring_provider", "codex") ?: "codex"
+            val options = windowOptions(prefs, provider)
+            val saved = prefs.getString("ring_window", options.first().second) ?: options.first().second
+            val active = saved.takeIf { key -> options.any { it.second == key } } ?: options.first().second
+            if (active != saved) prefs.edit().putString("ring_window", active).apply()
+            winRow.removeAllViews()
+            options.forEach { (name, key) ->
+                winRow.addView(makeChip(name, key == active) {
+                    prefs.edit().putString("ring_window", key).apply()
+                    if (prefs.getBoolean("island_enabled", false)) {
+                        startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                    }
+                    rebuildWindowRow()
+                    refreshRingPreview(prefs)
+                })
+            }
+            val isBudget = provider == "deepseek"
+            outerLegend.text = if (isBudget) "外环 · 预算使用" else "外环 · 额度用量"
+            innerLegend.text = if (isBudget) "内环 · 无时间进度" else "内环 · 时间进度"
+        }
+
+        // Provider 选择 (icon + 名称 的胶囊单选)
         card.addView(fieldLabel("Provider"))
         val provRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun rebuildProvRow() {
@@ -380,7 +457,7 @@ class SettingsActivity : AppCompatActivity() {
             provRow.removeAllViews()
             listOf(
                 "Codex" to "codex", "GLM" to "glm", "Kimi" to "kimi",
-                "Claude" to "claude", "MiniMax" to "minimax",
+                "Claude" to "claude", "MiniMax" to "minimax", "DeepSeek" to "deepseek",
             ).forEach { (name, id) ->
                 provRow.addView(makeProviderChip(name, id, id == cur) {
                     if (id != cur) {
@@ -388,11 +465,17 @@ class SettingsActivity : AppCompatActivity() {
                             Toast.makeText(this@SettingsActivity, "请先配置并启用 $name", Toast.LENGTH_SHORT).show()
                         } else {
                             prefs.edit().putString("ring_provider", id).apply()
+                            val options = windowOptions(prefs, id)
+                            val currentWindow = prefs.getString("ring_window", "")
+                            if (options.none { it.second == currentWindow }) {
+                                prefs.edit().putString("ring_window", options.first().second).apply()
+                            }
                             if (prefs.getBoolean("island_enabled", false)) {
                                 startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
                             }
                             ringPreview.iconRes = providerIcon(id)
                             ringPreview.centerText = if (ringPreview.iconRes == 0) providerInitial(id) else null
+                            rebuildWindowRow()
                             refreshRingPreview(prefs)
                         }
                     }
@@ -400,138 +483,23 @@ class SettingsActivity : AppCompatActivity() {
                 })
             }
         }
-        rebuildProvRow()
         card.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(provRow)
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
-        // 窗口类型
+        // 窗口类型：DeepSeek 使用自然日预算，其余 Provider 使用额度窗口。
         card.addView(fieldLabel("额度类型"))
-        val winRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        windowOptions.forEach { (name, _) ->
-            winRow.addView(makeChip(name, false) { })
-        }
-        card.addView(winRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        card.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(winRow)
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
-        // 初始化选中态 + 实时预览
-        val savedWin = prefs.getString("ring_window", "primary") ?: "primary"
-        updateChipStates(winRow, windowOptions.map { it.first to it.second }, savedWin)
-        winRow.forEachIndexed { i, v ->
-            if (v is TextView) {
-                val (name, key) = windowOptions[i]
-                v.setOnClickListener {
-                    prefs.edit().putString("ring_window", key).apply()
-                if (prefs.getBoolean("island_enabled", false)) {
-                    startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
-                }
-                    updateChipStates(winRow, windowOptions.map { it.first to it.second }, key)
-                    refreshRingPreview(prefs)
-                }
-            }
-        }
+        rebuildProvRow()
+        rebuildWindowRow()
         refreshRingPreview(prefs)
 
-        // 诊断按钮
-        val diagBtn = TextView(this).apply {
-            text = "平台能力诊断（实验）"
-            textSize = 13f; setTextColor(0xFF6E8BFF.toInt()); paint.isFakeBoldText = true
-            setPadding(dp(2), dp(14), dp(2), dp(6))
-            setOnClickListener { diagIsland() }
-        }
-        card.addView(diagBtn)
         return card
-    }
-
-    private fun diagIsland() {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val sb = StringBuilder()
-        sb.append("当前正式形态为悬浮窗；以下 Live Update/流体云项目是保留的实验诊断。\n\n")
-        sb.append("SDK=").append(android.os.Build.VERSION.SDK_INT).append(" (").append(android.os.Build.VERSION.RELEASE).append(")\n")
-        sb.append("ColorOS=").append(android.os.Build.VERSION.INCREMENTAL ?: "?").append("\n")
-        if (android.os.Build.VERSION.SDK_INT >= 36) {
-            sb.append("hasPromotableCharacteristics(需通知已post)=").append("(post后见logcat QVIsland)\n")
-            sb.append("canPostPromotedNotifications=").append(runCatching { nm.canPostPromotedNotifications() }.getOrElse { it.message }).append("\n")
-            sb.append("POST_NOTIFICATIONS granted=").append(
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            ).append("\n")
-            sb.append("channel importance=").append(nm.getNotificationChannel("qv_island")?.importance ?: "null").append("\n")
-        } else {
-            sb.append("SDK<36, ProgressStyle 不可用\n")
-        }
-        sb.append("service running=").append(isServiceRunning())
-        // 读回诊断: 系统是否真的打了 FLAG_PROMOTED_ONGOING
-        val promoted = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promoted", false)
-        val diagTs = getSharedPreferences("qv", MODE_PRIVATE).getLong("island_diag_ts", 0)
-        val freshReadback = diagTs > 0 && System.currentTimeMillis() - diagTs < 10 * 60 * 1000L
-        sb.append("\npromoted(readback)=").append(promoted)
-        sb.append("\npromotable(readback)=").append(getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promotable", false))
-        if (diagTs > 0) sb.append("\nreadback时间=").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(diagTs)))
-        if (!freshReadback) sb.append("\nreadback样本=无当前样本（历史值不参与结论）")
-        sb.append("\nlistener授权=").append(android.provider.Settings.Secure.getString(
-            contentResolver, "enabled_notification_listeners")?.contains(packageName) == true)
-        // 流体云端侧: 现场实测一次 (不依赖后台)
-        sb.append("\nMANUFACTURER=").append(android.os.Build.MANUFACTURER)
-        val fluid = try { OppoFluidCloud.share(this, 0, 0, "Codex", "诊断") } catch (e: Exception) {
-            JSONObject().put("code", -9).put("message", e.message ?: "调用异常")
-        }
-        sb.append("\n流体云端侧=").append(fluid.toString())
-
-        // ===== 判决: AOSP 提升判定逐条对照 =====
-        val vprefs = getSharedPreferences("qv", MODE_PRIVATE)
-        val vnm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        sb.append("\n\n===== 提升判定 (AOSP 8491) =====")
-        val c1 = if (Build.VERSION.SDK_INT >= 36) {
-            runCatching { vnm.canPostPromotedNotifications() }.getOrDefault(false)
-        } else false
-        val c2 = freshReadback && vprefs.getBoolean("island_promotable", false)
-        val c3 = freshReadback && vprefs.getBoolean("island_promoted", false)
-        val liveImportance = vnm.getNotificationChannel("qv_live")?.importance
-        sb.append("\n① canBePromoted(授权)=").append(if (c1) "PASS" else "FAIL")
-        sb.append("\n② hasPromotableCharacteristics(readback)=").append(if (c2) "PASS" else "FAIL")
-        sb.append("\n③ live channel importance=").append(liveImportance ?: "无当前通道")
-        sb.append("\n④ FLAG_PROMOTED_ONGOING(系统盖章)=").append(if (c3) "PASS ✅已提升" else "FAIL")
-        sb.append("\n⑤ post自检 style=").append(if (vprefs.getBoolean("island_selfcheck_style", false)) "PASS" else "FAIL")
-        sb.append(" colorized=").append(if (vprefs.getBoolean("island_selfcheck_color", false)) "PASS" else "FAIL")
-        sb.append(" ongoing=").append(if (vprefs.getBoolean("island_selfcheck_ongoing", false)) "PASS" else "FAIL")
-        sb.append(" title=").append(if (vprefs.getBoolean("island_selfcheck_title", false)) "PASS" else "FAIL")
-        sb.append(" noCustomViews=").append(if (vprefs.getBoolean("island_selfcheck_nocustom", false)) "PASS" else "FAIL")
-        sb.append("\n结论: ")
-        sb.append(when {
-            !freshReadback -> "当前悬浮窗版本没有发送 Live Update 测试通知，保留项仅供未来复测"
-            c3 -> "系统已提升! 若无岛, 是 ColorOS 渲染层选择不显示"
-            c1 && c2 -> "①②全过但未盖章 → ColorOS 侧在 NotificationManagerService 加了额外门槛"
-            c1 && !c2 -> "授权OK但通知特征FAIL → 查 logcat QVIsland 的 post 时真值"
-            else -> "前置条件未满足, 按上面 FAIL 项修"
-        })
-
-        val msg = sb.toString()
-        val dlg = android.app.AlertDialog.Builder(this)
-            .setTitle("平台能力诊断")
-            .create()
-        val scroll = ScrollView(this)
-        val innerPad = dp(20)
-        scroll.setPadding(innerPad, innerPad, innerPad, innerPad)
-        scroll.addView(TextView(this).apply {
-            text = msg; textSize = 12f; setTextColor(0xFFC9CDD6.toInt())
-            setTextIsSelectable(true)
-        })
-        dlg.setView(scroll)
-        dlg.setButton(android.app.AlertDialog.BUTTON_NEUTRAL, "复制") { _, _ ->
-            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("diag", msg))
-            Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
-        }
-        dlg.setButton(android.app.AlertDialog.BUTTON_POSITIVE, "好的",android.content.DialogInterface.OnClickListener { _, _ -> })
-        dlg.show()
-        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).paint.isFakeBoldText = true
-        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setTextColor(0xFF6E8BFF.toInt())
-    }
-
-    private fun isServiceRunning(): Boolean {
-        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-        @Suppress("DEPRECATION")
-        return am.getRunningServices(Int.MAX_VALUE).any { it.service.className == "com.tankecho.quotaview.IslandService" }
     }
 
     private fun refreshRingPreview(prefs: SharedPreferences) {
@@ -549,16 +517,26 @@ class SettingsActivity : AppCompatActivity() {
                             prefs.getString("minimax_key", "").orEmpty(),
                             prefs.getString("minimax_region", "cn").orEmpty(),
                         )
+                        "deepseek" -> DeepSeekBudgetStatus.fetch(
+                            prefs.getString("deepseek_key", "").orEmpty(),
+                            prefs.getString("deepseek_platform_token", "").orEmpty(),
+                            deepSeekLimits(prefs),
+                        )
                         else -> null
                     }
                 }.getOrNull()
             }
             val winKey = prefs.getString("ring_window", "primary") ?: "primary"
-            val win = st?.windows?.firstOrNull { it.selectionKey == winKey } ?: st?.windows?.firstOrNull()
+            val windows = st?.meterWindows().orEmpty()
+            val win = windows.firstOrNull { it.selectionKey == winKey } ?: windows.firstOrNull()
             ringPreview.usedPercent = win?.usedPercent?.toFloat() ?: 0f
             ringPreview.timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
             ringPreview.ringColor = when {
-                win == null || win.pace == null -> 0xFF6E8BFF.toInt()
+                win == null -> 0xFF6E8BFF.toInt()
+                win.selectionKey.startsWith("budget_") && win.usedPercent >= 100 -> 0xFFE5484D.toInt()
+                win.selectionKey.startsWith("budget_") && win.usedPercent >= 80 -> 0xFFF5A524.toInt()
+                win.selectionKey.startsWith("budget_") -> 0xFF46A758.toInt()
+                win.pace == null -> 0xFF6E8BFF.toInt()
                 win.pace!! > 1.5f -> 0xFFE5484D.toInt()
                 win.pace!! > 1f -> 0xFFF5A524.toInt()
                 else -> 0xFF6E8BFF.toInt()
@@ -609,20 +587,6 @@ class SettingsActivity : AppCompatActivity() {
         setOnClickListener { onClick(!selected) }
     }
 
-    private fun updateChipStates(row: LinearLayout, options: List<Pair<String, String>>, activeKey: String) {
-        row.forEachIndexed { i, v ->
-            if (v is TextView) {
-                val key = options.getOrNull(i)?.second ?: return@forEachIndexed
-                val sel = key == activeKey
-                v.background = android.graphics.drawable.GradientDrawable().apply {
-                    color = android.content.res.ColorStateList.valueOf(if (sel) 0xFF6E8BFF.toInt() else 0xFF262A33.toInt())
-                    cornerRadius = resources.displayMetrics.density * 20
-                }
-                v.setTextColor(if (sel) 0xFFFFFFFF.toInt() else 0xFF8A8F9E.toInt())
-            }
-        }
-    }
-
     private fun providerMark(id: String, iconRes: Int, sizeDp: Int): View {
         val resolvedIcon = iconRes.takeIf { it != 0 } ?: ProviderIcons.icon(id)
         if (resolvedIcon != 0) return android.widget.ImageView(this).apply { setImageResource(resolvedIcon) }
@@ -660,6 +624,12 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun ringProviderReady(prefs: SharedPreferences, id: String): Boolean {
         val enabled = prefs.getBoolean("show_$id", id == "codex" || id == "glm")
+        if (id == "deepseek") {
+            return enabled &&
+                !prefs.getString("deepseek_key", "").isNullOrBlank() &&
+                !prefs.getString("deepseek_platform_token", "").isNullOrBlank() &&
+                deepSeekLimits(prefs).isConfigured
+        }
         val credentialKey = when (id) {
             "codex" -> "codex_token"
             "glm" -> "glm_key"
@@ -739,33 +709,119 @@ class SettingsActivity : AppCompatActivity() {
         })
     }
 
-    private fun footer(prefs: SharedPreferences): View = LinearLayout(this).apply {
+    private fun footer(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) }
+        setPadding(dp(16), dp(16), dp(16), dp(14))
+        background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(0xFF171A22.toInt())
+            cornerRadius = dp(16).toFloat()
+            setStroke(dp(1), 0xFF292E3A.toInt())
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(8) }
 
         val version = BuildConfig.VERSION_NAME
-        addView(TextView(this@SettingsActivity).apply {
-            text = "QuotaView v$version"
-            textSize = 13f; setTextColor(0xFF8A8F9E.toInt()); paint.isFakeBoldText = true
+        addView(LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@SettingsActivity).apply {
+                text = "Q"
+                textSize = 17f
+                gravity = Gravity.CENTER
+                setTextColor(0xFFFFFFFF.toInt())
+                paint.isFakeBoldText = true
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xFF6276E9.toInt())
+                    cornerRadius = dp(11).toFloat()
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { rightMargin = dp(11) }
+            })
+            addView(LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@SettingsActivity).apply {
+                    text = "QuotaView"
+                    textSize = 15f
+                    setTextColor(0xFFF2F3F7.toInt())
+                    paint.isFakeBoldText = true
+                })
+                addView(TextView(this@SettingsActivity).apply {
+                    text = "Version $version · 本地直连"
+                    textSize = 11.5f
+                    setTextColor(0xFF747B8C.toInt())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = dp(2) }
+                })
+            })
+            addView(TextView(this@SettingsActivity).apply {
+                text = "凭证仅存设备"
+                textSize = 10.5f
+                setTextColor(0xFF8FA3FF.toInt())
+                setPadding(dp(9), dp(5), dp(9), dp(5))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0xFF222A40.toInt())
+                    cornerRadius = dp(14).toFloat()
+                }
+            })
+        })
+
+        addView(View(this@SettingsActivity).apply {
+            setBackgroundColor(0xFF292E3A.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(14); bottomMargin = dp(12)
+            }
         })
         addView(TextView(this@SettingsActivity).apply {
-            text = "© 2026 Tank × TankEcho\n从订阅套餐的额度里，看清每一分钱的去向"
-            textSize = 12f; setTextColor(0xFF5A5F6E.toInt()); gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
+            text = "从订阅额度到 API 消费，把每个 Provider 的状态放在同一块仪表盘里。"
+            textSize = 12f
+            setTextColor(0xFF8A91A1.toInt())
         })
         addView(LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(11), dp(9), dp(11), dp(9))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF20242E.toInt())
+                cornerRadius = dp(11).toFloat()
+                setStroke(dp(1), 0xFF303746.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(12) }
             addView(android.widget.ImageView(this@SettingsActivity).apply {
                 setImageResource(R.drawable.ic_github)
-                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { rightMargin = dp(5); topMargin = dp(1) }
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { rightMargin = dp(8) }
             })
             addView(TextView(this@SettingsActivity).apply {
-                text = "github.com/tankecho42/quotaview"
-                textSize = 12f; setTextColor(0xFF6E8BFF.toInt())
+                text = "GitHub · tankecho42/quotaview"
+                textSize = 12f
+                setTextColor(0xFFC6CFFF.toInt())
+                paint.isFakeBoldText = true
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
+            addView(TextView(this@SettingsActivity).apply {
+                text = "↗"
+                textSize = 14f
+                setTextColor(0xFF77809A.toInt())
+            })
+            setOnClickListener {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/tankecho42/quotaview")))
+            }
+        })
+        addView(TextView(this@SettingsActivity).apply {
+            text = "© 2026 Tank × TankEcho"
+            textSize = 10.5f
+            setTextColor(0xFF555B69.toInt())
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(12) }
         })
     }
 

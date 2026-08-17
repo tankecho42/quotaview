@@ -23,11 +23,14 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
+import com.tankecho.quotaview.data.DeepSeekBudgetLimits
+import com.tankecho.quotaview.data.DeepSeekBudgetStatus
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
+import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.CoroutineScope
@@ -517,7 +520,11 @@ class IslandService : Service() {
         })
         card.addView(TextView(this).apply {
             text = if (win == null) "等待数据到达…"
-            else "用量 ${win.usedPercent}% · 已过 ${win.timeElapsedPercent}% · PACE $paceText"
+            else if (win.selectionKey.startsWith("budget_")) {
+                "预算使用 ${win.usedPercent}% · DeepSeek 官方日账单"
+            } else {
+                "用量 ${win.usedPercent}% · 已过 ${win.timeElapsedPercent}% · PACE $paceText"
+            }
             textSize = 12.5f; setTextColor(0xFF9BA1B0.toInt()); gravity = Gravity.CENTER
             setPadding(0, (4 * dp).toInt(), 0, 0)
         })
@@ -640,7 +647,11 @@ class IslandService : Service() {
     }
 
     private fun healthColor(win: QuotaWindow?): Int = when {
-        win?.pace == null -> 0xFF6E8BFF.toInt()
+        win == null -> 0xFF6E8BFF.toInt()
+        win.selectionKey.startsWith("budget_") && win.usedPercent >= 100 -> 0xFFE5484D.toInt()
+        win.selectionKey.startsWith("budget_") && win.usedPercent >= 80 -> 0xFFF5A524.toInt()
+        win.selectionKey.startsWith("budget_") -> 0xFF46A758.toInt()
+        win.pace == null -> 0xFF6E8BFF.toInt()
         win.pace!! > 1.5f -> 0xFFE5484D.toInt()
         win.pace!! > 1f -> 0xFFF5A524.toInt()
         else -> 0xFF46A758.toInt()
@@ -653,7 +664,8 @@ class IslandService : Service() {
             runCatching { fetchRingStatus(prov, prefs) }.getOrNull()
         }
 
-        if (st == null || st.error != null || st.windows.isEmpty()) {
+        val windows = st?.meterWindows().orEmpty()
+        if (st == null || st.error != null || windows.isEmpty()) {
             // 数据失败时保留最后一次有效值；首次启动仍显示占位，不能让窗口消失。
             if (android.provider.Settings.canDrawOverlays(this)) {
                 if (barHost == null && ringView == null && detailView == null) attachBar()
@@ -663,7 +675,7 @@ class IslandService : Service() {
 
         lastUpdateAt = System.currentTimeMillis()
         val winKey = prefs.getString("ring_window", "primary") ?: "primary"
-        val win = st.windows.firstOrNull { it.selectionKey == winKey } ?: st.windows.firstOrNull()
+        val win = windows.firstOrNull { it.selectionKey == winKey } ?: windows.firstOrNull()
         currentWindow = win
 
         if (android.provider.Settings.canDrawOverlays(this)) {
@@ -683,7 +695,7 @@ class IslandService : Service() {
         }
     }
 
-    private fun fetchRingStatus(prov: String, prefs: android.content.SharedPreferences): ProviderStatus = when (prov) {
+    private suspend fun fetchRingStatus(prov: String, prefs: android.content.SharedPreferences): ProviderStatus = when (prov) {
         "codex" -> CodexApi.fetch(
             prefs.getString("codex_token", "").orEmpty(),
             prefs.getString("codex_account", "").orEmpty(),
@@ -695,6 +707,15 @@ class IslandService : Service() {
             prefs.getString("minimax_key", "").orEmpty(),
             prefs.getString("minimax_region", "cn").orEmpty(),
         )
+        "deepseek" -> DeepSeekBudgetStatus.fetch(
+            prefs.getString("deepseek_key", "").orEmpty(),
+            prefs.getString("deepseek_platform_token", "").orEmpty(),
+            DeepSeekBudgetLimits.parse(
+                prefs.getString("deepseek_budget_24h", ""),
+                prefs.getString("deepseek_budget_7d", ""),
+                prefs.getString("deepseek_budget_30d", ""),
+            ),
+        )
         else -> ProviderStatus(prov, providerName(prov), "?", emptyList(), updatedAt = 0)
     }
 
@@ -704,6 +725,7 @@ class IslandService : Service() {
         "kimi" -> "Kimi Code"
         "claude" -> "Claude"
         "minimax" -> "MiniMax"
+        "deepseek" -> "DeepSeek"
         else -> id
     }
 
@@ -713,13 +735,13 @@ class IslandService : Service() {
         "kimi" -> "K"
         "claude" -> "C"
         "minimax" -> "M"
+        "deepseek" -> "D"
         else -> "?"
     }
 
     companion object {
         const val CHANNEL_ID = "qv_island"
         const val NOTI_ID = 1001
-        const val LIVE_NOTI_ID = 1002
         const val ACTION_STOP = "stop"
         const val ACTION_REFRESH = "refresh"
         private const val RING_TOUCH_DEBOUNCE_MS = 350L
