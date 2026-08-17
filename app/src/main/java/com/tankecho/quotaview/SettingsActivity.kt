@@ -10,6 +10,7 @@ import android.view.Gravity
 import org.json.JSONObject
 import android.view.View
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -20,7 +21,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.forEachIndexed
 import androidx.lifecycle.lifecycleScope
 import com.tankecho.quotaview.data.CodexApi
+import com.tankecho.quotaview.data.ClaudeApi
+import com.tankecho.quotaview.data.DeepSeekApi
 import com.tankecho.quotaview.data.GlmApi
+import com.tankecho.quotaview.data.KimiApi
+import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,6 +41,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("qv", MODE_PRIVATE)
+        if (!prefs.contains("minimax_region")) prefs.edit().putString("minimax_region", "cn").apply()
 
         supportActionBar?.hide()
         val root = LinearLayout(this).apply {
@@ -71,6 +77,43 @@ class SettingsActivity : AppCompatActivity() {
                 FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key", secret = true),
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
 
+        root.addView(providerCard(prefs, "kimi", 0, "Kimi Code", "Coding Plan · 5h / 周额度",
+            listOf(
+                FieldDef("kimi_key", "Kimi Code API key", "api.kimi.com 的 Coding Plan key", secret = true),
+            ), defaultEnabled = false) {
+            KimiApi.fetch(prefs.getString("kimi_key", "").orEmpty())
+        })
+
+        root.addView(providerCard(prefs, "claude", 0, "Claude", "Claude.ai · 5h / 周额度",
+            listOf(
+                FieldDef("claude_token", "OAuth access token", "~/.claude/.credentials.json → claudeAiOauth.accessToken", secret = true),
+            ), defaultEnabled = false) {
+            ClaudeApi.fetch(prefs.getString("claude_token", "").orEmpty())
+        })
+
+        root.addView(providerCard(prefs, "minimax", 0, "MiniMax", "Coding Plan · 5h / 周额度",
+            listOf(
+                FieldDef("minimax_key", "API key / OAuth token", "MiniMax Coding Plan 凭证", secret = true),
+                FieldDef("minimax_region", "Region", "cn 或 global"),
+            ), defaultEnabled = false) {
+            MiniMaxApi.fetch(
+                prefs.getString("minimax_key", "").orEmpty(),
+                prefs.getString("minimax_region", "cn").orEmpty(),
+            )
+        })
+
+        root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方 API · 账户余额",
+            listOf(
+                FieldDef("deepseek_key", "API key", "platform.deepseek.com 的 API key", secret = true),
+            ), defaultEnabled = false) {
+            DeepSeekApi.fetch(prefs.getString("deepseek_key", "").orEmpty())
+        })
+
+        root.addView(unavailableProviderCard(
+            "qwen", "Qwen / 阿里云百炼", "Coding Plan",
+            "官方目前没有开放可查询剩余额度的 API；仅能在控制台查看，QuotaView 不会用本地估算冒充真实额度。",
+        ))
+
         // ---------- 灵动岛配置 ----------
         root.addView(sectionLabel("LIVE RING · 悬浮窗"))
         root.addView(liveRingCard(prefs))
@@ -83,8 +126,8 @@ class SettingsActivity : AppCompatActivity() {
     // ---------- provider 卡片: 开关 + 内嵌配置 + 打开即验证 ----------
 
     private fun providerCard(
-        prefs: SharedPreferences, id: String, @Suppress("unused") iconRes: Int, title: String, subtitle: String,
-        fields: List<FieldDef>, validator: () -> ProviderStatus,
+        prefs: SharedPreferences, id: String, iconRes: Int, title: String, subtitle: String,
+        fields: List<FieldDef>, defaultEnabled: Boolean = true, validator: () -> ProviderStatus,
     ): LinearLayout {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -104,8 +147,7 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        headerRow.addView(android.widget.ImageView(this).apply {
-            setImageResource(iconRes)
+        headerRow.addView(providerMark(id, iconRes, 22).apply {
             layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { rightMargin = dp(10) }
         })
         val titleCol = LinearLayout(this).apply {
@@ -124,7 +166,7 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(10), dp(2), dp(10), dp(2))
         }
         val sw = SwitchCompat(this).apply {
-            isChecked = prefs.getBoolean("show_$id", true)
+            isChecked = prefs.getBoolean("show_$id", defaultEnabled)
         }
         headerRow.addView(titleCol)
         headerRow.addView(chevron)
@@ -162,10 +204,11 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 validationJob = lifecycleScope.launch {
                     val st = withContext(Dispatchers.IO) { runCatching(validator).getOrNull() }
-                    val ok = st != null && st.error == null && st.windows.isNotEmpty()
+                    val ok = st != null && st.error == null && st.hasData
                     if (ok) {
                         prefs.edit().putBoolean("show_$id", true).apply()
-                        Toast.makeText(this@SettingsActivity, "$title 连通 ✓ ${st!!.windows.size} 个窗口", Toast.LENGTH_SHORT).show()
+                        val count = st!!.windows.size + st.balances.size
+                        Toast.makeText(this@SettingsActivity, "$title 连通，读取到 $count 项数据", Toast.LENGTH_SHORT).show()
                     } else {
                         sw.isChecked = false
                         prefs.edit().putBoolean("show_$id", false).apply()
@@ -175,8 +218,53 @@ class SettingsActivity : AppCompatActivity() {
                 }
             } else {
                 prefs.edit().putBoolean("show_$id", false).apply()
+                if (prefs.getString("ring_provider", "codex") == id) {
+                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax")
+                        .firstOrNull { it != id && ringProviderReady(prefs, it) }
+                    if (fallback != null) {
+                        prefs.edit().putString("ring_provider", fallback).apply()
+                        if (::ringPreview.isInitialized) {
+                            ringPreview.iconRes = providerIcon(fallback)
+                            ringPreview.centerText = if (ringPreview.iconRes == 0) providerInitial(fallback) else null
+                            refreshRingPreview(prefs)
+                        }
+                        if (prefs.getBoolean("island_enabled", false)) {
+                            startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                        }
+                    }
+                }
             }
         }
+        return card
+    }
+
+    private fun unavailableProviderCard(id: String, title: String, subtitle: String, reason: String): LinearLayout {
+        val card = section("", "")
+        card.removeAllViews()
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        row.addView(providerMark(id, 0, 22).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { rightMargin = dp(10) }
+        })
+        val titles = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        titles.addView(TextView(this).apply {
+            text = title; textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
+        })
+        titles.addView(TextView(this).apply {
+            text = subtitle; textSize = 12f; setTextColor(0xFF5A5F6E.toInt())
+        })
+        row.addView(titles)
+        row.addView(TextView(this).apply {
+            text = "待开放"; textSize = 11f; setTextColor(0xFFF5A524.toInt())
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+        })
+        card.addView(row)
+        card.addView(TextView(this).apply {
+            text = reason; textSize = 12f; setTextColor(0xFF8A8F9E.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        })
         return card
     }
 
@@ -228,7 +316,9 @@ class SettingsActivity : AppCompatActivity() {
 
         // 预览环
         ringPreview = com.tankecho.quotaview.ui.DualRingView(this).apply {
-            iconRes = if (prefs.getString("ring_provider", "codex") == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+            val id = prefs.getString("ring_provider", "codex") ?: "codex"
+            iconRes = providerIcon(id)
+            centerText = if (iconRes == 0) providerInitial(id) else null
         }
         val previewWrap = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -258,22 +348,33 @@ class SettingsActivity : AppCompatActivity() {
         fun rebuildProvRow() {
             val cur = prefs.getString("ring_provider", "codex")
             provRow.removeAllViews()
-            listOf("Codex" to "codex", "GLM" to "glm").forEach { (name, id) ->
-                provRow.addView(makeProviderChip(name, id == cur) {
+            listOf(
+                "Codex" to "codex", "GLM" to "glm", "Kimi" to "kimi",
+                "Claude" to "claude", "MiniMax" to "minimax",
+            ).forEach { (name, id) ->
+                provRow.addView(makeProviderChip(name, id, id == cur) {
                     if (id != cur) {
-                        prefs.edit().putString("ring_provider", id).apply()
-                        if (prefs.getBoolean("island_enabled", false)) {
-                            startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                        if (!ringProviderReady(prefs, id)) {
+                            Toast.makeText(this@SettingsActivity, "请先配置并启用 $name", Toast.LENGTH_SHORT).show()
+                        } else {
+                            prefs.edit().putString("ring_provider", id).apply()
+                            if (prefs.getBoolean("island_enabled", false)) {
+                                startService(Intent(this@SettingsActivity, IslandService::class.java).setAction(IslandService.ACTION_REFRESH))
+                            }
+                            ringPreview.iconRes = providerIcon(id)
+                            ringPreview.centerText = if (ringPreview.iconRes == 0) providerInitial(id) else null
+                            refreshRingPreview(prefs)
                         }
-                        ringPreview.iconRes = if (id == "codex") R.drawable.ic_openai else R.drawable.ic_zai
-                        refreshRingPreview(prefs)
                     }
                     rebuildProvRow()
                 })
             }
         }
         rebuildProvRow()
-        card.addView(provRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        card.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(provRow)
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
 
         // 窗口类型
         card.addView(fieldLabel("额度类型"))
@@ -409,8 +510,17 @@ class SettingsActivity : AppCompatActivity() {
             val st = withContext(Dispatchers.IO) {
                 val prov = prefs.getString("ring_provider", "codex")!!
                 runCatching {
-                    if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
-                    else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+                    when (prov) {
+                        "codex" -> CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
+                        "glm" -> GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+                        "kimi" -> KimiApi.fetch(prefs.getString("kimi_key", "").orEmpty())
+                        "claude" -> ClaudeApi.fetch(prefs.getString("claude_token", "").orEmpty())
+                        "minimax" -> MiniMaxApi.fetch(
+                            prefs.getString("minimax_key", "").orEmpty(),
+                            prefs.getString("minimax_region", "cn").orEmpty(),
+                        )
+                        else -> null
+                    }
                 }.getOrNull()
             }
             val winKey = prefs.getString("ring_window", "primary") ?: "primary"
@@ -428,7 +538,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     /** Provider 胶囊: 官方 icon + 名称, 选中态靛蓝描边 */
-    private fun makeProviderChip(name: String, selected: Boolean, onClick: (Boolean) -> Unit): android.view.View =
+    private fun makeProviderChip(name: String, id: String, selected: Boolean, onClick: (Boolean) -> Unit): android.view.View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -444,8 +554,7 @@ class SettingsActivity : AppCompatActivity() {
             lp.rightMargin = dp(8).toInt()
             layoutParams = lp
 
-            addView(android.widget.ImageView(this@SettingsActivity).apply {
-                setImageResource(if (name == "Codex") R.drawable.ic_openai else R.drawable.ic_zai)
+            addView(providerMark(id, providerIcon(id), 18).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(18).toInt(), dp(18).toInt()).apply { rightMargin = dp(6).toInt() }
             })
             addView(TextView(this@SettingsActivity).apply {
@@ -482,6 +591,57 @@ class SettingsActivity : AppCompatActivity() {
                 v.setTextColor(if (sel) 0xFFFFFFFF.toInt() else 0xFF8A8F9E.toInt())
             }
         }
+    }
+
+    private fun providerMark(id: String, iconRes: Int, sizeDp: Int): View {
+        if (iconRes != 0) return android.widget.ImageView(this).apply { setImageResource(iconRes) }
+        val (letter, color) = when (id) {
+            "kimi" -> "K" to 0xFF7357D9.toInt()
+            "claude" -> "C" to 0xFFD97757.toInt()
+            "qwen" -> "Q" to 0xFF615CED.toInt()
+            "minimax" -> "M" to 0xFF3B82F6.toInt()
+            "deepseek" -> "D" to 0xFF4D6BFE.toInt()
+            else -> "?" to 0xFF5A5F6E.toInt()
+        }
+        return TextView(this).apply {
+            text = letter
+            gravity = Gravity.CENTER
+            textSize = sizeDp * 0.48f
+            setTextColor(0xFFFFFFFF.toInt())
+            paint.isFakeBoldText = true
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(color)
+            }
+        }
+    }
+
+    private fun providerIcon(id: String): Int = when (id) {
+        "codex" -> R.drawable.ic_openai
+        "glm" -> R.drawable.ic_zai
+        else -> 0
+    }
+
+    private fun providerInitial(id: String): String = when (id) {
+        "kimi" -> "K"
+        "claude" -> "C"
+        "minimax" -> "M"
+        "qwen" -> "Q"
+        "deepseek" -> "D"
+        else -> "?"
+    }
+
+    private fun ringProviderReady(prefs: SharedPreferences, id: String): Boolean {
+        val enabled = prefs.getBoolean("show_$id", id == "codex" || id == "glm")
+        val credentialKey = when (id) {
+            "codex" -> "codex_token"
+            "glm" -> "glm_key"
+            "kimi" -> "kimi_key"
+            "claude" -> "claude_token"
+            "minimax" -> "minimax_key"
+            else -> return false
+        }
+        return enabled && !prefs.getString(credentialKey, "").isNullOrBlank()
     }
 
     private fun sectionLabel(text: String): TextView = TextView(this).apply {

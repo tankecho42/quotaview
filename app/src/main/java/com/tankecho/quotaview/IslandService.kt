@@ -22,7 +22,11 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.tankecho.quotaview.data.CodexApi
+import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.GlmApi
+import com.tankecho.quotaview.data.KimiApi
+import com.tankecho.quotaview.data.MiniMaxApi
+import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.ui.DualRingView
 import kotlinx.coroutines.CoroutineScope
@@ -316,7 +320,8 @@ class IslandService : Service() {
         ringColor = healthColor(win)
         bgColor = 0x66000000.toInt()   // 黑 40% 不透明 = 60% 透明 (按用户口径)
         val prov = getSharedPreferences("qv", MODE_PRIVATE).getString("ring_provider", "codex")!!
-        iconRes = if (prov == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+        iconRes = providerIcon(prov)
+        centerText = if (iconRes == 0) providerInitial(prov) else null
     }
 
     private fun showRing(fromLeft: Boolean) {
@@ -466,8 +471,8 @@ class IslandService : Service() {
         val win = currentWindow
         val prefs = getSharedPreferences("qv", MODE_PRIVATE)
         val prov = prefs.getString("ring_provider", "codex")!!
-        val provName = if (prov == "codex") "Codex" else "GLM"
-        val iconRes = if (prov == "codex") R.drawable.ic_openai else R.drawable.ic_zai
+        val provName = providerName(prov)
+        val iconRes = providerIcon(prov)
 
         val scrim = View(this)
         val sp = WindowManager.LayoutParams(
@@ -497,6 +502,7 @@ class IslandService : Service() {
             timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
             ringColor = healthColor(win)
             this.iconRes = iconRes
+            centerText = if (iconRes == 0) providerInitial(prov) else null
         }
         card.addView(bigRing, LinearLayout.LayoutParams((150 * dp).toInt(), (150 * dp).toInt()))
 
@@ -643,10 +649,7 @@ class IslandService : Service() {
         val prefs = getSharedPreferences("qv", MODE_PRIVATE)
         val st = withContext(Dispatchers.IO) {
             val prov = prefs.getString("ring_provider", "codex")!!
-            runCatching {
-                if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
-                else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
-            }.getOrNull()
+            runCatching { fetchRingStatus(prov, prefs) }.getOrNull()
         }
 
         if (st == null || st.error != null || st.windows.isEmpty()) {
@@ -677,6 +680,43 @@ class IslandService : Service() {
                 it.invalidate()
             }
         }
+    }
+
+    private fun fetchRingStatus(prov: String, prefs: android.content.SharedPreferences): ProviderStatus = when (prov) {
+        "codex" -> CodexApi.fetch(
+            prefs.getString("codex_token", "").orEmpty(),
+            prefs.getString("codex_account", "").orEmpty(),
+        )
+        "glm" -> GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+        "kimi" -> KimiApi.fetch(prefs.getString("kimi_key", "").orEmpty())
+        "claude" -> ClaudeApi.fetch(prefs.getString("claude_token", "").orEmpty())
+        "minimax" -> MiniMaxApi.fetch(
+            prefs.getString("minimax_key", "").orEmpty(),
+            prefs.getString("minimax_region", "cn").orEmpty(),
+        )
+        else -> ProviderStatus(prov, providerName(prov), "?", emptyList(), updatedAt = 0)
+    }
+
+    private fun providerName(id: String): String = when (id) {
+        "codex" -> "Codex"
+        "glm" -> "GLM"
+        "kimi" -> "Kimi Code"
+        "claude" -> "Claude"
+        "minimax" -> "MiniMax"
+        else -> id
+    }
+
+    private fun providerIcon(id: String): Int = when (id) {
+        "codex" -> R.drawable.ic_openai
+        "glm" -> R.drawable.ic_zai
+        else -> 0
+    }
+
+    private fun providerInitial(id: String): String = when (id) {
+        "kimi" -> "K"
+        "claude" -> "C"
+        "minimax" -> "M"
+        else -> "?"
     }
 
     companion object {

@@ -12,8 +12,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.tankecho.quotaview.data.CodexApi
+import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.CostSimulator
+import com.tankecho.quotaview.data.DeepSeekApi
 import com.tankecho.quotaview.data.GlmApi
+import com.tankecho.quotaview.data.KimiApi
+import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import android.content.Intent
@@ -21,6 +25,9 @@ import androidx.core.content.ContextCompat
 import com.tankecho.quotaview.ui.RaceBars
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -90,17 +97,36 @@ class MainActivity : AppCompatActivity() {
         swipe.isRefreshing = true
         refreshJob = lifecycleScope.launch {
             val results = withContext(Dispatchers.IO) {
-                listOfNotNull(
-                    runCatching {
+                coroutineScope {
+                    listOf(
+                    async { runCatching {
                         val tok = prefs.getString("codex_token", "").orEmpty()
                         val acct = prefs.getString("codex_account", "").orEmpty()
-                        if (tok.isNotBlank()) CodexApi.fetch(tok, acct) else null
-                    }.getOrNull(),
-                    runCatching {
+                        if (prefs.getBoolean("show_codex", true) && tok.isNotBlank()) CodexApi.fetch(tok, acct) else null
+                    }.getOrNull() },
+                    async { runCatching {
                         val key = prefs.getString("glm_key", "").orEmpty()
-                        if (key.isNotBlank()) GlmApi.fetch(key) else null
-                    }.getOrNull(),
-                )
+                        if (prefs.getBoolean("show_glm", true) && key.isNotBlank()) GlmApi.fetch(key) else null
+                    }.getOrNull() },
+                    async { runCatching {
+                        val key = prefs.getString("kimi_key", "").orEmpty()
+                        if (prefs.getBoolean("show_kimi", false) && key.isNotBlank()) KimiApi.fetch(key) else null
+                    }.getOrNull() },
+                    async { runCatching {
+                        val token = prefs.getString("claude_token", "").orEmpty()
+                        if (prefs.getBoolean("show_claude", false) && token.isNotBlank()) ClaudeApi.fetch(token) else null
+                    }.getOrNull() },
+                    async { runCatching {
+                        val key = prefs.getString("minimax_key", "").orEmpty()
+                        val region = prefs.getString("minimax_region", "cn").orEmpty()
+                        if (prefs.getBoolean("show_minimax", false) && key.isNotBlank()) MiniMaxApi.fetch(key, region) else null
+                    }.getOrNull() },
+                    async { runCatching {
+                        val key = prefs.getString("deepseek_key", "").orEmpty()
+                        if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) DeepSeekApi.fetch(key) else null
+                    }.getOrNull() },
+                    ).awaitAll().filterNotNull()
+                }
             }
             swipe.isRefreshing = false
             render(results)
@@ -112,13 +138,7 @@ class MainActivity : AppCompatActivity() {
     private fun render(statuses: List<ProviderStatus>) {
         root.removeAllViews()
 
-        val visible = statuses.filter {
-            when (it.id) {
-                "codex" -> prefs.getBoolean("show_codex", true)
-                "glm" -> prefs.getBoolean("show_glm", true)
-                else -> true
-            }
-        }
+        val visible = statuses.filter { prefs.getBoolean("show_${it.id}", it.id == "codex" || it.id == "glm") }
         if (visible.isEmpty()) {
             root.addView(tv("还没有可显示的 provider\n\n请从右上角「设置」完成配置", 15, 0xFF8A8F9E.toInt(), Gravity.CENTER))
             return
@@ -165,12 +185,11 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(12), dp(10))
         }
-        headerRow.addView(android.widget.ImageView(this).apply {
-            setImageResource(if (st.id == "codex") R.drawable.ic_openai else R.drawable.ic_zai)
+        headerRow.addView(providerMark(st.id, 24).apply {
             layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(10) }
         })
         headerRow.addView(TextView(this).apply {
-            text = if (st.id == "codex") "Codex" else "GLM"
+            text = st.name
             textSize = 18f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
         })
         // 套餐胶囊标签
@@ -235,12 +254,65 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) }
             })
         }
+        st.balances.forEach { metric ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(4), 0, dp(2))
+            }
+            row.addView(tv(metric.label, 14, 0xFF8A8F9E.toInt(), bold = true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(tv(formatBalance(metric.amount, metric.currency), 22, 0xFFF2F3F7.toInt(), bold = true).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+            body.addView(row)
+            metric.detail?.let {
+                body.addView(tv(it, 12, 0xFF6F7482.toInt(), bottom = 10))
+            }
+        }
         section.addView(body)
         if (collapsed.contains(st.id)) { body.visibility = View.GONE; chevron.text = "▸" }
         return section
     }
 
     // ---------- 小工具 ----------
+
+    private fun providerMark(id: String, sizeDp: Int): View {
+        val icon = when (id) {
+            "codex" -> R.drawable.ic_openai
+            "glm" -> R.drawable.ic_zai
+            else -> 0
+        }
+        if (icon != 0) return android.widget.ImageView(this).apply { setImageResource(icon) }
+        val (letter, color) = when (id) {
+            "kimi" -> "K" to 0xFF7357D9.toInt()
+            "claude" -> "C" to 0xFFD97757.toInt()
+            "minimax" -> "M" to 0xFF3B82F6.toInt()
+            "deepseek" -> "D" to 0xFF4D6BFE.toInt()
+            else -> "?" to 0xFF5A5F6E.toInt()
+        }
+        return TextView(this).apply {
+            text = letter
+            gravity = Gravity.CENTER
+            textSize = sizeDp * 0.48f
+            setTextColor(0xFFFFFFFF.toInt())
+            paint.isFakeBoldText = true
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(color)
+            }
+        }
+    }
+
+    private fun formatBalance(value: Double, currency: String): String {
+        val amount = when {
+            value >= 100 -> "%.0f".format(value)
+            value >= 1 -> "%.2f".format(value)
+            else -> "%.4f".format(value)
+        }
+        return "$amount $currency"
+    }
 
     private fun card(paddingDp: Int = 16): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL

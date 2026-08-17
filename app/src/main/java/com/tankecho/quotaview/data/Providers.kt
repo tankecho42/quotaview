@@ -3,6 +3,7 @@ package com.tankecho.quotaview.data
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
 import kotlin.math.roundToInt
 
 // ---------- 统一数据模型 ----------
@@ -30,12 +31,23 @@ data class QuotaWindow(
 }
 
 data class ProviderStatus(
-    val id: String,             // "codex" / "glm"
+    val id: String,             // "codex" / "glm" / "kimi" / ...
     val name: String,           // 显示名
     val plan: String,           // "Pro" / "Max"
     val windows: List<QuotaWindow>,
     val updatedAt: Long,
     val error: String? = null,
+    val balances: List<BalanceMetric> = emptyList(),
+) {
+    val hasData: Boolean get() = windows.isNotEmpty() || balances.isNotEmpty()
+}
+
+/** 无法换算成百分比的账户余额；与订阅额度窗口分开展示，避免伪造进度。 */
+data class BalanceMetric(
+    val label: String,
+    val amount: Double,
+    val currency: String,
+    val detail: String? = null,
 )
 
 // ---------- Codex (ChatGPT Plan) ----------
@@ -217,6 +229,312 @@ object GlmApi {
         }
         return ProviderStatus("glm", "GLM Coding Plan", level, windows, now())
     }
+}
+
+// ---------- Kimi Code ----------
+
+object KimiApi {
+    // Kimi CLI 官方实现使用 GET https://api.kimi.com/coding/v1/usages。
+    fun fetch(key: String): ProviderStatus {
+        val conn = URL("https://api.kimi.com/coding/v1/usages").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Authorization", "Bearer $key")
+            conn.setRequestProperty("Accept", "application/json")
+            val code = conn.responseCode
+            if (code != 200) return ProviderStatus("kimi", "Kimi Code", "?", emptyList(), now(), "HTTP $code")
+            parse(conn.inputStream.bufferedReader().readText())
+        } catch (e: Exception) {
+            ProviderStatus("kimi", "Kimi Code", "?", emptyList(), now(), e.message ?: "network error")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    fun parse(body: String): ProviderStatus {
+        val root = JSONObject(body)
+        val windows = mutableListOf<QuotaWindow>()
+
+        root.optJSONObject("usage")?.let { usage ->
+            usageWindow(usage, usage, JSONObject(), "周窗口", "week", 7 * 86400L)?.let(windows::add)
+        }
+
+        val limits = root.optJSONArray("limits")
+        if (limits != null) {
+            for (i in 0 until limits.length()) {
+                val item = limits.optJSONObject(i) ?: continue
+                val detail = item.optJSONObject("detail") ?: item
+                val window = item.optJSONObject("window") ?: JSONObject()
+                val seconds = durationSeconds(window, item, detail)
+                val key = when {
+                    seconds in 17_000L..19_000L -> "primary"
+                    seconds >= 6 * 86400L -> "week"
+                    else -> "limit_${i + 1}"
+                }
+                val fallback = when (key) {
+                    "primary" -> "5h 窗口"
+                    "week" -> "周窗口"
+                    else -> "额度 ${i + 1}"
+                }
+                usageWindow(detail, item, window, fallback, key, seconds)?.let(windows::add)
+            }
+        }
+
+        // 某些响应会同时在 usage 和 limits 返回周额度，只保留信息更早、稳定 key 的一条。
+        val unique = windows.distinctBy { it.selectionKey }
+        val plan = root.optString("plan", root.optString("plan_type", "Coding")).ifBlank { "Coding" }
+        return ProviderStatus("kimi", "Kimi Code", plan.uppercase(), unique, now(),
+            if (unique.isEmpty()) "no usage data" else null)
+    }
+
+    private fun usageWindow(
+        detail: JSONObject,
+        item: JSONObject,
+        window: JSONObject,
+        fallbackLabel: String,
+        key: String,
+        fallbackSeconds: Long,
+    ): QuotaWindow? {
+        val limit = detail.number("limit")
+        var used = detail.number("used")
+        if (used == null && limit != null) detail.number("remaining")?.let { used = limit - it }
+        if (used == null && limit == null) return null
+        val pct = if (limit != null && limit > 0) ((used ?: 0.0) / limit * 100).roundToInt().coerceIn(0, 100) else 0
+        val seconds = durationSeconds(window, item, detail).takeIf { it > 0 } ?: fallbackSeconds
+        val label = when {
+            seconds in 17_000L..19_000L -> "5h 窗口"
+            seconds >= 6 * 86400L -> "周窗口"
+            else -> detail.optString("name", detail.optString("title", fallbackLabel)).ifBlank { fallbackLabel }
+        }
+        return QuotaWindow(label, pct, resetAt(detail, item), seconds, selectionKey = key)
+    }
+
+    private fun durationSeconds(vararg objects: JSONObject): Long {
+        objects.forEach { obj ->
+            val duration = obj.number("duration") ?: return@forEach
+            val unit = obj.optString("timeUnit", obj.optString("time_unit", "")).uppercase()
+            return when {
+                "MINUTE" in unit -> (duration * 60).toLong()
+                "HOUR" in unit -> (duration * 3600).toLong()
+                "DAY" in unit -> (duration * 86400).toLong()
+                else -> duration.toLong()
+            }
+        }
+        return 0
+    }
+
+    private fun resetAt(vararg objects: JSONObject): Long {
+        objects.forEach { obj ->
+            for (key in listOf("reset_at", "resetAt", "reset_time", "resetTime")) {
+                parseEpoch(obj.opt(key))?.let { return it }
+            }
+            for (key in listOf("reset_in", "resetIn", "ttl")) {
+                obj.number(key)?.let { return now() + it.toLong() }
+            }
+        }
+        return 0
+    }
+}
+
+// ---------- Claude subscription ----------
+
+object ClaudeApi {
+    // Claude Code OAuth usage endpoint；普通 sk-ant-api API key 不具备订阅额度权限。
+    fun fetch(oauthToken: String): ProviderStatus {
+        val conn = URL("https://api.anthropic.com/api/oauth/usage").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Authorization", "Bearer $oauthToken")
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("anthropic-beta", "oauth-2025-04-20")
+            conn.setRequestProperty("User-Agent", "claude-code/2.1.0")
+            val code = conn.responseCode
+            if (code != 200) return ProviderStatus("claude", "Claude", "?", emptyList(), now(), "HTTP $code")
+            parse(conn.inputStream.bufferedReader().readText())
+        } catch (e: Exception) {
+            ProviderStatus("claude", "Claude", "?", emptyList(), now(), e.message ?: "network error")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    fun parse(body: String): ProviderStatus {
+        val root = JSONObject(body)
+        val windows = mutableListOf<QuotaWindow>()
+        listOf(
+            ClaudeWindow("five_hour", "5h 窗口", "primary", 5 * 3600L),
+            ClaudeWindow("seven_day", "周窗口", "week", 7 * 86400L),
+            ClaudeWindow("seven_day_opus", "Opus 周窗口", "opus", 7 * 86400L),
+            ClaudeWindow("seven_day_sonnet", "Sonnet 周窗口", "sonnet", 7 * 86400L),
+        ).forEach { spec ->
+            val obj = root.optJSONObject(spec.jsonKey) ?: return@forEach
+            val raw = obj.number("utilization") ?: return@forEach
+            val pct = (if (raw <= 1.0) raw * 100 else raw).roundToInt().coerceIn(0, 100)
+            windows.add(QuotaWindow(
+                spec.label, pct, parseEpoch(obj.opt("resets_at")) ?: 0,
+                spec.seconds, selectionKey = spec.selectionKey,
+            ))
+        }
+        val balances = mutableListOf<BalanceMetric>()
+        root.optJSONObject("extra_usage")?.let { extra ->
+            if (extra.optBoolean("is_enabled")) {
+                val used = extra.number("used_credits")
+                val limit = extra.number("monthly_limit")
+                if (used != null) balances.add(BalanceMetric(
+                    "额外用量", used, extra.optString("currency", "USD"),
+                    limit?.let { "月上限 ${formatAmount(it)}" },
+                ))
+            }
+        }
+        return ProviderStatus("claude", "Claude", "CLAUDE.AI", windows, now(),
+            if (windows.isEmpty() && balances.isEmpty()) "no usage data" else null, balances)
+    }
+
+    private data class ClaudeWindow(
+        val jsonKey: String, val label: String, val selectionKey: String, val seconds: Long,
+    )
+}
+
+// ---------- MiniMax Coding Plan ----------
+
+object MiniMaxApi {
+    fun fetch(key: String, region: String): ProviderStatus {
+        val host = if (region.equals("global", true)) "api.minimax.io" else "api.minimaxi.com"
+        val conn = URL("https://$host/v1/api/openplatform/coding_plan/remains").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Authorization", "Bearer $key")
+            conn.setRequestProperty("Accept", "application/json")
+            val code = conn.responseCode
+            if (code != 200) return ProviderStatus("minimax", "MiniMax", "?", emptyList(), now(), "HTTP $code")
+            parse(conn.inputStream.bufferedReader().readText())
+        } catch (e: Exception) {
+            ProviderStatus("minimax", "MiniMax", "?", emptyList(), now(), e.message ?: "network error")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    fun parse(body: String): ProviderStatus {
+        val root = JSONObject(body)
+        val base = root.optJSONObject("base_resp")
+        if (base != null && base.optInt("status_code", 0) != 0) {
+            return ProviderStatus("minimax", "MiniMax", "?", emptyList(), now(),
+                base.optString("status_msg", "API error"))
+        }
+        val remains = root.optJSONArray("model_remains")
+            ?: return ProviderStatus("minimax", "MiniMax", "?", emptyList(), now(), "no quota data")
+        var selected: JSONObject? = null
+        for (i in 0 until remains.length()) {
+            val item = remains.optJSONObject(i) ?: continue
+            if (selected == null || item.optString("model_name") == "general") selected = item
+        }
+        val item = selected ?: return ProviderStatus("minimax", "MiniMax", "?", emptyList(), now(), "no quota data")
+        val windows = listOf(
+            miniMaxWindow(item, weekly = false),
+            miniMaxWindow(item, weekly = true),
+        )
+        return ProviderStatus("minimax", "MiniMax", "CODING", windows, now())
+    }
+
+    private fun miniMaxWindow(item: JSONObject, weekly: Boolean): QuotaWindow {
+        val prefix = if (weekly) "current_weekly" else "current_interval"
+        val total = item.number("${prefix}_total_count") ?: 0.0
+        val remaining = item.number("${prefix}_usage_count") ?: 0.0
+        val remainingPct = item.number("${prefix}_remaining_percent")
+        val usedPct = when {
+            remainingPct != null -> (100 - remainingPct).roundToInt().coerceIn(0, 100)
+            total > 0 -> ((total - remaining) / total * 100).roundToInt().coerceIn(0, 100)
+            else -> 0
+        }
+        val durationMs = item.number(if (weekly) "weekly_remains_time" else "remains_time") ?: 0.0
+        val explicitEnd = parseEpoch(item.opt(if (weekly) "weekly_end_time" else "end_time"))
+        val reset = explicitEnd ?: if (durationMs > 0) now() + (durationMs / 1000).toLong() else 0
+        return QuotaWindow(
+            if (weekly) "周窗口" else "5h 窗口", usedPct, reset,
+            if (weekly) 7 * 86400L else 5 * 3600L,
+            selectionKey = if (weekly) "week" else "primary",
+        )
+    }
+}
+
+// ---------- DeepSeek API balance ----------
+
+object DeepSeekApi {
+    fun fetch(key: String): ProviderStatus {
+        val conn = URL("https://api.deepseek.com/user/balance").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Authorization", "Bearer $key")
+            conn.setRequestProperty("Accept", "application/json")
+            val code = conn.responseCode
+            if (code != 200) return ProviderStatus("deepseek", "DeepSeek", "?", emptyList(), now(), "HTTP $code")
+            parse(conn.inputStream.bufferedReader().readText())
+        } catch (e: Exception) {
+            ProviderStatus("deepseek", "DeepSeek", "?", emptyList(), now(), e.message ?: "network error")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    fun parse(body: String): ProviderStatus {
+        val root = JSONObject(body)
+        val balances = mutableListOf<BalanceMetric>()
+        val infos = root.optJSONArray("balance_infos")
+        if (infos != null) {
+            for (i in 0 until infos.length()) {
+                val info = infos.optJSONObject(i) ?: continue
+                val currency = info.optString("currency", "CNY")
+                val total = info.number("total_balance") ?: continue
+                val granted = info.number("granted_balance")
+                val topped = info.number("topped_up_balance")
+                val detail = listOfNotNull(
+                    granted?.let { "赠送 ${formatAmount(it)}" },
+                    topped?.let { "充值 ${formatAmount(it)}" },
+                ).joinToString(" · ").ifBlank { null }
+                balances.add(BalanceMetric("可用余额", total, currency, detail))
+            }
+        }
+        return ProviderStatus("deepseek", "DeepSeek", "API 余额", emptyList(), now(),
+            if (balances.isEmpty()) "no balance data" else null, balances)
+    }
+}
+
+private fun JSONObject.number(key: String): Double? {
+    val raw = opt(key)
+    return when (raw) {
+        is Number -> raw.toDouble().takeIf { it.isFinite() }
+        is String -> raw.toDoubleOrNull()?.takeIf { it.isFinite() }
+        else -> null
+    }
+}
+
+private fun parseEpoch(raw: Any?): Long? {
+    if (raw == null || raw == JSONObject.NULL) return null
+    val numeric = when (raw) {
+        is Number -> raw.toDouble()
+        is String -> raw.toDoubleOrNull()
+        else -> null
+    }
+    if (numeric != null && numeric.isFinite() && numeric > 0) {
+        return (if (numeric > 10_000_000_000L) numeric / 1000 else numeric).toLong()
+    }
+    return runCatching { Instant.parse(raw.toString()).epochSecond }.getOrNull()
+}
+
+private fun formatAmount(value: Double): String = when {
+    value >= 100 -> "%.0f".format(value)
+    value >= 1 -> "%.2f".format(value)
+    else -> "%.4f".format(value)
 }
 
 // ---------- Cost simulator (定价表可配置) ----------

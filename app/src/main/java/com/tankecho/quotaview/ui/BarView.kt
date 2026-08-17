@@ -2,6 +2,7 @@ package com.tankecho.quotaview.ui
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
@@ -26,7 +27,7 @@ class BarView(context: Context) : View(context) {
         style = Paint.Style.STROKE; color = 0x99 shl 24
     }
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeCap = Paint.Cap.BUTT; color = (0x59 shl 24) or 0x9BA1B0
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.BUTT; color = (0x70 shl 24) or 0xB4B9C6
     }
     private val usedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
@@ -83,10 +84,10 @@ class BarView(context: Context) : View(context) {
 
         // 3. 用量进度描边 (外框内部, 三边路径)
         val inset = 2 * d
-        val stroke = 1.5f * d
+        val stroke = 2.1f * d
         trackPaint.strokeWidth = stroke
         usedPaint.strokeWidth = stroke
-        usedPaint.color = healthColor
+        usedPaint.color = brighten(healthColor, 0.34f)
         openPath(tmp, w, h, inset, stroke, r)
         pm.setPath(tmp, false)
         val len = pm.length
@@ -100,5 +101,12 @@ class BarView(context: Context) : View(context) {
             usedPaint.alpha = 255
             canvas.drawPath(seg, usedPaint)
         }
+    }
+
+    /** 窄边栏在深色壁纸上容易吃色；向白色提亮，同时保留健康度色相。 */
+    private fun brighten(color: Int, amount: Float): Int {
+        val a = amount.coerceIn(0f, 1f)
+        fun channel(value: Int): Int = (value + (255 - value) * a).toInt().coerceIn(0, 255)
+        return Color.rgb(channel(Color.red(color)), channel(Color.green(color)), channel(Color.blue(color)))
     }
 }
