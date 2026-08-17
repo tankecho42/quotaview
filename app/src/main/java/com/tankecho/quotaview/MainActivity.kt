@@ -9,6 +9,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.CostSimulator
@@ -18,8 +19,8 @@ import com.tankecho.quotaview.data.QuotaWindow
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.tankecho.quotaview.ui.RaceBars
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -28,7 +29,7 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private var refreshJob: Job? = null
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
     private lateinit var swipe: SwipeRefreshLayout
@@ -65,9 +66,11 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         header.addView(TextView(this).apply {
-            text = "⚙️"
-            textSize = 22f
-            setPadding(dp(12), dp(4), dp(4), dp(8))
+            text = "设置"
+            textSize = 14f
+            setTextColor(0xFF8FA3FF.toInt())
+            paint.isFakeBoldText = true
+            setPadding(dp(12), dp(8), dp(4), dp(8))
             setOnClickListener {
                 startActivity(android.content.Intent(this@MainActivity, SettingsActivity::class.java))
             }
@@ -83,8 +86,9 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() { super.onResume(); refresh() }
 
     private fun refresh() {
+        refreshJob?.cancel()
         swipe.isRefreshing = true
-        scope.launch {
+        refreshJob = lifecycleScope.launch {
             val results = withContext(Dispatchers.IO) {
                 listOfNotNull(
                     runCatching {
@@ -116,7 +120,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (visible.isEmpty()) {
-            root.addView(tv("还没有可显示的 provider\n\n右上角 ⋮ → Settings 配置", 15, 0xFF8A8F9E.toInt(), Gravity.CENTER))
+            root.addView(tv("还没有可显示的 provider\n\n请从右上角「设置」完成配置", 15, 0xFF8A8F9E.toInt(), Gravity.CENTER))
             return
         }
 
@@ -136,8 +140,8 @@ class MainActivity : AppCompatActivity() {
             val cost = CostSimulator.costUSD(tokens, rates)
             val card = card()
             card.addView(tv(when (prov) {
-                "codex" -> "⚡ Codex 等量 API 成本"
-                else -> "🧩 GLM 等量 API 成本"
+                "codex" -> "Codex 等量 API 成本"
+                else -> "GLM 等量 API 成本"
             }, 15, 0xFF8A8F9E.toInt(), bold = true))
             card.addView(tv(CostSimulator.fmtUSD(cost), 26, 0xFFF2F3F7.toInt(), bold = true))
             card.addView(tv(
@@ -198,7 +202,7 @@ class MainActivity : AppCompatActivity() {
         section.addView(headerRow)
 
         st.error?.let {
-            body.addView(tv("⚠️ ${it}", 13, 0xFFE5484D.toInt()))
+            body.addView(tv("请求失败：$it", 13, 0xFFE5484D.toInt()))
             section.addView(body)
             return section
         }
@@ -206,8 +210,7 @@ class MainActivity : AppCompatActivity() {
         st.windows.forEach { win ->
             body.addView(tv(win.label, 14, 0xFF8A8F9E.toInt(), bold = true))
             val race = RaceBars(this).apply {
-                usedPercent = win.usedPercent
-                timePercent = win.timeElapsedPercent
+                setProgress(win.usedPercent, win.timeElapsedPercent)
                 overheated = (win.pace ?: 1f) > 1f
             }
             body.addView(race, vlp(top = 6, bottom = 4, height = dp(26)))

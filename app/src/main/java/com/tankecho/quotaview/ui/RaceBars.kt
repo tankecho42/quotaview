@@ -18,9 +18,9 @@ class RaceBars @JvmOverloads constructor(
 ) : View(context, attrs, defStyle) {
 
     var usedPercent: Int = 0
-        set(v) { field = v.coerceIn(0, 100); animateTo(); }
+        private set
     var timePercent: Int = 0
-        set(v) { field = v.coerceIn(0, 100); animateTo(); }
+        private set
 
     /** 用于颜色: 额度条是否处于超速状态 */
     var overheated: Boolean = false
@@ -39,6 +39,13 @@ class RaceBars @JvmOverloads constructor(
     private val usedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val timePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9BA1B0.toInt() }
     private val clipRect = RectF()
+
+    /** 同一帧更新两条进度，只启动一次动画，避免连续 setter 互相取消。 */
+    fun setProgress(usedPercent: Int, timePercent: Int) {
+        this.usedPercent = usedPercent.coerceIn(0, 100)
+        this.timePercent = timePercent.coerceIn(0, 100)
+        animateTo()
+    }
 
     private fun animateTo() {
         animator?.cancel()
@@ -95,5 +102,11 @@ class RaceBars @JvmOverloads constructor(
             getDefaultSize(suggestedMinimumWidth, widthMeasureSpec),
             resolveSize(totalH, heightMeasureSpec)
         )
+    }
+
+    override fun onDetachedFromWindow() {
+        animator?.cancel()
+        animator = null
+        super.onDetachedFromWindow()
     }
 }

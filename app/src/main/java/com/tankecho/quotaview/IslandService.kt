@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -26,6 +27,9 @@ import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.ui.DualRingView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -44,8 +48,11 @@ import java.util.Locale
  */
 class IslandService : Service() {
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private val serviceJob = SupervisorJob()
+    private val scope = CoroutineScope(serviceJob + Dispatchers.Main.immediate)
     private val handler = Handler(Looper.getMainLooper())
+    private var refreshJob: Job? = null
+    private var shuttingDown = false
     private var currentWindow: QuotaWindow? = null
     private var lastUpdateAt = 0L
 
@@ -70,7 +77,7 @@ class IslandService : Service() {
 
     private val poll = object : Runnable {
         override fun run() {
-            scope.launch { refreshData() }
+            requestRefresh()
             handler.postDelayed(this, 5 * 60 * 1000L)
         }
     }
@@ -82,19 +89,21 @@ class IslandService : Service() {
         startForegroundQuiet()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         handler.post(poll)
-        scope.launch { refreshData() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
-            ACTION_REFRESH -> scope.launch { refreshData() }
+            ACTION_REFRESH -> requestRefresh()
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(poll)
+        shuttingDown = true
+        handler.removeCallbacksAndMessages(null)
+        refreshJob?.cancel()
+        scope.cancel()
         detachAll()
         super.onDestroy()
     }
@@ -132,26 +141,8 @@ class IslandService : Service() {
             this.x = x; this.y = y
         }
 
-    private fun barColor(): Int = (healthColor(currentWindow) and 0x00FFFFFF) or (-0x60000000)
-
-    /** bar_side: "left"/"right" 吸附边 */
-    private fun barSide(): String =
-        getSharedPreferences("qv", MODE_PRIVATE).getString("bar_side", "right") ?: "right"
-
-    private fun barDrawable() = GradientDrawable().apply {
-        val r = barW / 2f
-        if (barSide() == "right") {
-            // 贴右缘: 左侧圆角, 右侧直角 (贴屏平边)
-            setCornerRadii(floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r))
-            setStroke((1 * dp).toInt().coerceAtLeast(1), 0x66000000)   // 1dp 半透明黑边框 (右侧直角处被屏幕裁掉)
-        } else {
-            setCornerRadii(floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f))
-            setStroke((1 * dp).toInt().coerceAtLeast(1), 0x66000000)
-        }
-        setColor(barColor())
-    }
-
     private fun attachBar() {
+        if (shuttingDown) return
         if (attachingBar) return   // 防重入 (并发 refreshData 双 attach)
         attachingBar = true
         try {
@@ -191,7 +182,6 @@ class IslandService : Service() {
     }
 
     private var attachingBar = false
-    private var barMorphed = false
     private var morphDownX = 0f; private var morphDownY = 0f
     private var morphBaseX = 0; private var morphBaseY = 0
     private var downX = 0f; private var downY = 0f
@@ -245,7 +235,6 @@ class IslandService : Service() {
         params.width = ringSize; params.height = ringSize
         params.x = morphBaseX.toInt(); params.y = morphBaseY.toInt()
         runCatching { wm.updateViewLayout(host, params) }
-        barMorphed = true
     }
 
     /** morph 圆环松手: 吸边动画, 结束后 morph 回 bar 形态 (原位) */
@@ -284,7 +273,6 @@ class IslandService : Service() {
         params.width = hostW; params.height = hostH
         params.x = hostX; params.y = hostY
         runCatching { wm.updateViewLayout(host, params) }
-        barMorphed = false
         // 持久化新锚点
         getSharedPreferences("qv", MODE_PRIVATE).edit()
             .putString("bar_side", side).putInt("bar_x", hostX).putInt("bar_y", hostY).apply()
@@ -332,6 +320,7 @@ class IslandService : Service() {
     }
 
     private fun showRing(fromLeft: Boolean) {
+        if (shuttingDown) return
         if (!android.provider.Settings.canDrawOverlays(this)) return
         if (ringView != null) return
         val bp = barParams ?: return
@@ -346,7 +335,7 @@ class IslandService : Service() {
         detachBar()   // 先移除长条再上 ring (顺序换: addView 前 bar 一定已清)
         wm.addView(v, params)
         ringView = v; ringParams = params
-        ringShownAt = System.currentTimeMillis()
+        ringShownAt = SystemClock.uptimeMillis()
         saveBarPos(bp)
         ValueAnimator.ofInt(startHiddenX, endX).apply {
             duration = 240
@@ -366,6 +355,11 @@ class IslandService : Service() {
     private var ringShownAt = 0L
 
     private fun handleRingTouch(v: View, ev: MotionEvent, params: WindowManager.LayoutParams): Boolean {
+        // 新窗口可能收到展开长条那次手势残留的 DOWN/UP；防止一展开就误开详情。
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN &&
+            SystemClock.uptimeMillis() - ringShownAt < RING_TOUCH_DEBOUNCE_MS) {
+            return false
+        }
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 rDownX = ev.rawX; rDownY = ev.rawY
@@ -390,7 +384,6 @@ class IslandService : Service() {
                     return true
                 }
                 // 拖到屏幕最边缘 (左右各 8%) 才算收缩手势; 松手时以最终位置定锚点
-                val finalSide = if (params.x + ringSize / 2 < screenW / 2) "left" else "right"
                 val atEdge = params.x < screenW * 0.08f || params.x + ringSize > screenW * 0.92f
                 if (atEdge) {
                     saveAnchorFromRing(params)   // 收缩前先存锚点 → bar 出现在 ring 实际位置
@@ -401,6 +394,10 @@ class IslandService : Service() {
                     saveAnchorFromRing(params)
                     handler.postDelayed(ringTimeout, 8000)
                 }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                handler.postDelayed(ringTimeout, 8000)
                 return true
             }
         }
@@ -437,6 +434,7 @@ class IslandService : Service() {
     }
 
     private fun hideRing() {
+        if (shuttingDown) return
         val rv = ringView ?: run { if (barHost == null) attachBar(); return }
         val p = ringParams ?: return
         val target = if (p.x < screenW / 2) -ringSize else screenW
@@ -448,7 +446,7 @@ class IslandService : Service() {
             }
             doOnEnd {
                 detachRing()
-                if (android.provider.Settings.canDrawOverlays(this@IslandService) && barHost == null) attachBar()
+                if (!shuttingDown && android.provider.Settings.canDrawOverlays(this@IslandService) && barHost == null) attachBar()
             }
             start()
         }
@@ -462,6 +460,7 @@ class IslandService : Service() {
     // ---------- DETAIL: 详情卡 (点外部自动收回) ----------
 
     private fun showDetail() {
+        if (shuttingDown) return
         if (detailView != null) return
         handler.removeCallbacks(ringTimeout)
         val win = currentWindow
@@ -626,6 +625,13 @@ class IslandService : Service() {
 
     // ---------- 数据 ----------
 
+    /** 新刷新会取消旧刷新，避免快速切 provider 时慢响应覆盖新选择。 */
+    private fun requestRefresh() {
+        if (shuttingDown) return
+        refreshJob?.cancel()
+        refreshJob = scope.launch { refreshData() }
+    }
+
     private fun healthColor(win: QuotaWindow?): Int = when {
         win?.pace == null -> 0xFF6E8BFF.toInt()
         win.pace!! > 1.5f -> 0xFFE5484D.toInt()
@@ -641,8 +647,10 @@ class IslandService : Service() {
                 if (prov == "codex") CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
                 else GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
             }.getOrNull()
-        } ?: run {
-            // 数据失败: 悬浮窗照样显示占位 (灰蓝色), 不能让窗口消失
+        }
+
+        if (st == null || st.error != null || st.windows.isEmpty()) {
+            // 数据失败时保留最后一次有效值；首次启动仍显示占位，不能让窗口消失。
             if (android.provider.Settings.canDrawOverlays(this)) {
                 if (barHost == null && ringView == null && detailView == null) attachBar()
             }
@@ -651,7 +659,7 @@ class IslandService : Service() {
 
         lastUpdateAt = System.currentTimeMillis()
         val winKey = prefs.getString("ring_window", "primary") ?: "primary"
-        val win = st.windows.firstOrNull { labelToKey(it.label) == winKey } ?: st.windows.firstOrNull()
+        val win = st.windows.firstOrNull { it.selectionKey == winKey } ?: st.windows.firstOrNull()
         currentWindow = win
 
         if (android.provider.Settings.canDrawOverlays(this)) {
@@ -671,18 +679,13 @@ class IslandService : Service() {
         }
     }
 
-    private fun labelToKey(label: String): String = when {
-        label.startsWith("MCP") -> "mcp"
-        label.contains("周") -> "week"
-        else -> "primary"
-    }
-
     companion object {
         const val CHANNEL_ID = "qv_island"
         const val NOTI_ID = 1001
         const val LIVE_NOTI_ID = 1002
         const val ACTION_STOP = "stop"
         const val ACTION_REFRESH = "refresh"
+        private const val RING_TOUCH_DEBOUNCE_MS = 350L
     }
 }
 

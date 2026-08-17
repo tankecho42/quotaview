@@ -75,8 +75,11 @@ object OppoFluidCloud {
             try {
                 val client = context.contentResolver.acquireUnstableContentProviderClient(authority)
                 if (client != null) {
-                    val bundle = client.call("shareIntent", null, Bundle().apply { putString("intentData", data.toString()) })
-                    client.close()
+                    val bundle = try {
+                        client.call("shareIntent", null, Bundle().apply { putString("intentData", data.toString()) })
+                    } finally {
+                        client.close()
+                    }
                     val raw = bundle?.getString("result")
                     if (raw != null) {
                         val jo = JSONObject(raw)

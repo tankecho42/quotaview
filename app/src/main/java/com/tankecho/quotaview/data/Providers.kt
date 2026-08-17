@@ -14,6 +14,7 @@ data class QuotaWindow(
     val resetAt: Long,          // epoch seconds，重置时间
     val windowSeconds: Long,    // 窗口总时长（5h=18000, 7d=604800），未知=0
     val kind: Kind = Kind.TOKENS,
+    val selectionKey: String = "primary", // UI 选择使用稳定 key，不依赖展示文案
 ) {
     enum class Kind { TOKENS, TOOL_CALLS }
 
@@ -75,20 +76,22 @@ object CodexApi {
         if (pw != null) {
             val secs = pw.optLong("limit_window_seconds", 0)
             windows.add(QuotaWindow(
-                label = if (secs >= 86400) "周窗口" else "主窗口",
+                label = windowLabel(secs, "主窗口"),
                 usedPercent = pw.optInt("used_percent", 0),
                 resetAt = pw.optLong("reset_at", 0),
                 windowSeconds = secs,
+                selectionKey = windowKey(secs),
             ))
         }
         val sw = rl.optJSONObject("secondary_window")
         if (sw != null) {
             val secs = sw.optLong("limit_window_seconds", 0)
             windows.add(QuotaWindow(
-                label = "副窗口",
+                label = windowLabel(secs, "副窗口"),
                 usedPercent = sw.optInt("used_percent", 0),
                 resetAt = sw.optLong("reset_at", 0),
                 windowSeconds = secs,
+                selectionKey = windowKey(secs),
             ))
         }
         // additional_rate_limits: 副额度（Spark 等）
@@ -103,10 +106,19 @@ object CodexApi {
                     usedPercent = rl2.optInt("used_percent", 0),
                     resetAt = rl2.optLong("reset_at", 0),
                     windowSeconds = secs,
+                    selectionKey = "additional",
                 ))
             }
         }
         return ProviderStatus("codex", "Codex", plan.uppercase(), windows, now())
+    }
+
+    private fun windowKey(seconds: Long): String = if (seconds >= 6 * 86400L) "week" else "primary"
+
+    private fun windowLabel(seconds: Long, fallback: String): String = when {
+        seconds in 17_000L..19_000L -> "5h 窗口"
+        seconds >= 6 * 86400L -> "周窗口"
+        else -> fallback
     }
 }
 
@@ -176,6 +188,10 @@ object GlmApi {
                 usedPercent = lim.optInt("percentage", 0),
                 resetAt = lim.optLong("nextResetTime", 0) / 1000,  // ms → s
                 windowSeconds = hours * 3600,
+                selectionKey = when (hours) {
+                    168L -> "week"
+                    else -> "primary"
+                },
             ))
         }
         toolLimit?.let { tl ->
@@ -196,6 +212,7 @@ object GlmApi {
                 resetAt = tl.optLong("nextResetTime", 0) / 1000,
                 windowSeconds = 0,  // 月度，未知时长 → PACE 不算
                 kind = QuotaWindow.Kind.TOOL_CALLS,
+                selectionKey = "mcp",
             ))
         }
         return ProviderStatus("glm", "GLM Coding Plan", level, windows, now())

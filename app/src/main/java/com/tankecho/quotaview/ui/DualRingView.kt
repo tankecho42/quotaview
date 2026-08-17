@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.View
+import androidx.appcompat.content.res.AppCompatResources
 
 /**
  * 双同心圆环: 外环=额度用量(粗), 内环=时间进度(细, 紧贴外环内侧), 中心=provider icon
@@ -19,6 +21,12 @@ class DualRingView @JvmOverloads constructor(
     var ringColor = 0xFF6E8BFF.toInt()
     var timeColor = 0xFF9BA1B0.toInt()
     var iconRes = 0
+        set(value) {
+            if (field == value) return
+            field = value
+            iconDrawable = if (value == 0) null else AppCompatResources.getDrawable(context, value)?.mutate()
+            invalidate()
+        }
     var centerText: String? = null
     /** 悬浮圆环场景: 纯黑半透明圆底 (叠加在内容下层); 详情卡场景不设 */
     var bgColor: Int? = null
@@ -41,6 +49,7 @@ class DualRingView @JvmOverloads constructor(
     }
 
     private val oval = RectF()
+    private var iconDrawable: Drawable? = null
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -78,12 +87,11 @@ class DualRingView @JvmOverloads constructor(
         canvas.drawArc(oval, -90f, 360f * (timeElapsedPercent / 100f).coerceIn(0f, 1f), false, timePaint)
 
         // 中心: provider icon
-        if (iconRes != 0) {
-            val dr = resources.getDrawable(iconRes, null)
+        iconDrawable?.let { dr ->
             val s = (innerR - d * 6) * 1.55f
             dr.setBounds((cx - s / 2).toInt(), (cy - s / 2).toInt(), (cx + s / 2).toInt(), (cy + s / 2).toInt())
             dr.draw(canvas)
-        } else {
+        } ?: run {
             centerText?.let { canvas.drawText(it, cx, cy + textPaint.textSize / 3, textPaint) }
         }
     }

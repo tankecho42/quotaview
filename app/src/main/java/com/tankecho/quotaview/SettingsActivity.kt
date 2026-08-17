@@ -3,6 +3,7 @@ package com.tankecho.quotaview
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -11,23 +12,24 @@ import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.forEachIndexed
+import androidx.lifecycle.lifecycleScope
 import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.ProviderStatus
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class SettingsActivity : AppCompatActivity() {
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private var previewJob: Job? = null
     private lateinit var ringPreview: com.tankecho.quotaview.ui.DualRingView
     private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false, val secret: Boolean = false)
 
@@ -121,7 +123,7 @@ class SettingsActivity : AppCompatActivity() {
             text = if (hasConfig) "▾" else "▾"; textSize = 15f; setTextColor(0xFF8A8F9E.toInt())
             setPadding(dp(10), dp(2), dp(10), dp(2))
         }
-        val sw = Switch(this).apply {
+        val sw = SwitchCompat(this).apply {
             isChecked = prefs.getBoolean("show_$id", true)
         }
         headerRow.addView(titleCol)
@@ -147,7 +149,9 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         // 打开即验证: 通过才保持开, 失败强制关闭
+        var validationJob: Job? = null
         sw.setOnCheckedChangeListener { _, checked ->
+            validationJob?.cancel()
             if (checked) {
                 val missing = fields.any { prefs.getString(it.key, "").isNullOrBlank() }
                 if (missing) {
@@ -156,7 +160,7 @@ class SettingsActivity : AppCompatActivity() {
                     body.visibility = View.VISIBLE; chevron.text = "▾"
                     return@setOnCheckedChangeListener
                 }
-                scope.launch {
+                validationJob = lifecycleScope.launch {
                     val st = withContext(Dispatchers.IO) { runCatching(validator).getOrNull() }
                     val ok = st != null && st.error == null && st.windows.isNotEmpty()
                     if (ok) {
@@ -187,11 +191,11 @@ class SettingsActivity : AppCompatActivity() {
         // 标题行 + 总开关
         val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         titleRow.addView(TextView(this).apply {
-            text = "💍 悬浮窗展示"
+            text = "悬浮窗展示"
             textSize = 16f; setTextColor(0xFFF2F3F7.toInt()); paint.isFakeBoldText = true
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        val islandSwitch = Switch(this).apply {
+        val islandSwitch = SwitchCompat(this).apply {
             isChecked = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_enabled", false)
         }
         titleRow.addView(islandSwitch)
@@ -204,7 +208,8 @@ class SettingsActivity : AppCompatActivity() {
                     startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:$packageName")))
                     islandSwitch.isChecked = false
-                } else if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
                     islandSwitch.isChecked = false
@@ -216,7 +221,8 @@ class SettingsActivity : AppCompatActivity() {
                 }
             } else {
                 prefs.edit().putBoolean("island_enabled", false).apply()
-                stopService(Intent(this, IslandService::class.java))
+                val serviceIntent = Intent(this, IslandService::class.java)
+                stopService(serviceIntent)
             }
         }
 
@@ -297,7 +303,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // 诊断按钮
         val diagBtn = TextView(this).apply {
-            text = "🩺 诊断悬浮窗"
+            text = "平台能力诊断（实验）"
             textSize = 13f; setTextColor(0xFF6E8BFF.toInt()); paint.isFakeBoldText = true
             setPadding(dp(2), dp(14), dp(2), dp(6))
             setOnClickListener { diagIsland() }
@@ -309,6 +315,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun diagIsland() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         val sb = StringBuilder()
+        sb.append("当前正式形态为悬浮窗；以下 Live Update/流体云项目是保留的实验诊断。\n\n")
         sb.append("SDK=").append(android.os.Build.VERSION.SDK_INT).append(" (").append(android.os.Build.VERSION.RELEASE).append(")\n")
         sb.append("ColorOS=").append(android.os.Build.VERSION.INCREMENTAL ?: "?").append("\n")
         if (android.os.Build.VERSION.SDK_INT >= 36) {
@@ -325,9 +332,11 @@ class SettingsActivity : AppCompatActivity() {
         // 读回诊断: 系统是否真的打了 FLAG_PROMOTED_ONGOING
         val promoted = getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promoted", false)
         val diagTs = getSharedPreferences("qv", MODE_PRIVATE).getLong("island_diag_ts", 0)
+        val freshReadback = diagTs > 0 && System.currentTimeMillis() - diagTs < 10 * 60 * 1000L
         sb.append("\npromoted(readback)=").append(promoted)
         sb.append("\npromotable(readback)=").append(getSharedPreferences("qv", MODE_PRIVATE).getBoolean("island_promotable", false))
         if (diagTs > 0) sb.append("\nreadback时间=").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(diagTs)))
+        if (!freshReadback) sb.append("\nreadback样本=无当前样本（历史值不参与结论）")
         sb.append("\nlistener授权=").append(android.provider.Settings.Secure.getString(
             contentResolver, "enabled_notification_listeners")?.contains(packageName) == true)
         // 流体云端侧: 现场实测一次 (不依赖后台)
@@ -341,12 +350,15 @@ class SettingsActivity : AppCompatActivity() {
         val vprefs = getSharedPreferences("qv", MODE_PRIVATE)
         val vnm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         sb.append("\n\n===== 提升判定 (AOSP 8491) =====")
-        val c1 = runCatching { vnm.canPostPromotedNotifications() }.getOrDefault(false)
-        val c2 = vprefs.getBoolean("island_promotable", false)
-        val c3 = vprefs.getBoolean("island_promoted", false)
+        val c1 = if (Build.VERSION.SDK_INT >= 36) {
+            runCatching { vnm.canPostPromotedNotifications() }.getOrDefault(false)
+        } else false
+        val c2 = freshReadback && vprefs.getBoolean("island_promotable", false)
+        val c3 = freshReadback && vprefs.getBoolean("island_promoted", false)
+        val liveImportance = vnm.getNotificationChannel("qv_live")?.importance
         sb.append("\n① canBePromoted(授权)=").append(if (c1) "PASS" else "FAIL")
         sb.append("\n② hasPromotableCharacteristics(readback)=").append(if (c2) "PASS" else "FAIL")
-        sb.append("\n③ channel importance>MIN=").append("PASS(importance=3)")
+        sb.append("\n③ live channel importance=").append(liveImportance ?: "无当前通道")
         sb.append("\n④ FLAG_PROMOTED_ONGOING(系统盖章)=").append(if (c3) "PASS ✅已提升" else "FAIL")
         sb.append("\n⑤ post自检 style=").append(if (vprefs.getBoolean("island_selfcheck_style", false)) "PASS" else "FAIL")
         sb.append(" colorized=").append(if (vprefs.getBoolean("island_selfcheck_color", false)) "PASS" else "FAIL")
@@ -355,6 +367,7 @@ class SettingsActivity : AppCompatActivity() {
         sb.append(" noCustomViews=").append(if (vprefs.getBoolean("island_selfcheck_nocustom", false)) "PASS" else "FAIL")
         sb.append("\n结论: ")
         sb.append(when {
+            !freshReadback -> "当前悬浮窗版本没有发送 Live Update 测试通知，保留项仅供未来复测"
             c3 -> "系统已提升! 若无岛, 是 ColorOS 渲染层选择不显示"
             c1 && c2 -> "①②全过但未盖章 → ColorOS 侧在 NotificationManagerService 加了额外门槛"
             c1 && !c2 -> "授权OK但通知特征FAIL → 查 logcat QVIsland 的 post 时真值"
@@ -363,7 +376,7 @@ class SettingsActivity : AppCompatActivity() {
 
         val msg = sb.toString()
         val dlg = android.app.AlertDialog.Builder(this)
-            .setTitle("灵动岛诊断")
+            .setTitle("平台能力诊断")
             .create()
         val scroll = ScrollView(this)
         val innerPad = dp(20)
@@ -391,7 +404,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshRingPreview(prefs: SharedPreferences) {
-        scope.launch {
+        previewJob?.cancel()
+        previewJob = lifecycleScope.launch {
             val st = withContext(Dispatchers.IO) {
                 val prov = prefs.getString("ring_provider", "codex")!!
                 runCatching {
@@ -400,7 +414,7 @@ class SettingsActivity : AppCompatActivity() {
                 }.getOrNull()
             }
             val winKey = prefs.getString("ring_window", "primary") ?: "primary"
-            val win = st?.windows?.firstOrNull { labelToKey(it.label) == winKey } ?: st?.windows?.firstOrNull()
+            val win = st?.windows?.firstOrNull { it.selectionKey == winKey } ?: st?.windows?.firstOrNull()
             ringPreview.usedPercent = win?.usedPercent?.toFloat() ?: 0f
             ringPreview.timeElapsedPercent = win?.timeElapsedPercent?.toFloat() ?: 0f
             ringPreview.ringColor = when {
@@ -411,12 +425,6 @@ class SettingsActivity : AppCompatActivity() {
             }
             ringPreview.invalidate()
         }
-    }
-
-    private fun labelToKey(label: String): String = when {
-        label.startsWith("MCP") -> "mcp"
-        label.contains("周") -> "week"
-        else -> "primary"
     }
 
     /** Provider 胶囊: 官方 icon + 名称, 选中态靛蓝描边 */

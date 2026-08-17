@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 
 /**
@@ -20,7 +21,7 @@ class BarView(context: Context) : View(context) {
     var healthColor = 0xFF6E8BFF.toInt()
     var attachRight = true          // true=贴右缘 (贴屏侧=右边, 无边框)
 
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val fillDrawable = GradientDrawable().apply { setColor(0x66000000) }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; color = 0x99 shl 24
     }
@@ -67,16 +68,13 @@ class BarView(context: Context) : View(context) {
         val r = w / 2f
 
         // 1. 半透明黑填充 (单侧圆角胶囊)
-        fillPaint.color = 0x66000000
-        val fill = android.graphics.drawable.GradientDrawable()
         if (attachRight) {
-            fill.setCornerRadii(floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r))
+            fillDrawable.setCornerRadii(floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r))
         } else {
-            fill.setCornerRadii(floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f))
+            fillDrawable.setCornerRadii(floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f))
         }
-        fill.setColor(0x66000000)
-        fill.setBounds(0, 0, width, height)
-        fill.draw(canvas)
+        fillDrawable.setBounds(0, 0, width, height)
+        fillDrawable.draw(canvas)
 
         // 2. 1dp 深色外框 (三边)
         borderPaint.strokeWidth = 1 * d

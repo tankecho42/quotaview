@@ -27,9 +27,11 @@ def collect_codex(since_ts):
     files = glob.glob(f"{HOME}/.codex/sessions/**/*.jsonl", recursive=True)
     inp = cached = outp = reas = 0
     sessions = 0
+    usage_fields = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
     for f in files:
         if os.path.getmtime(f) < since_ts - 86400 * 2:  # 粗过滤
             continue
+        baseline = {key: 0 for key in usage_fields}
         last = None
         try:
             for line in open(f, errors="ignore"):
@@ -38,17 +40,29 @@ def collect_codex(since_ts):
                 except Exception:
                     continue
                 if d.get("type") == "event_msg" and d.get("payload", {}).get("type") == "token_count":
-                    last = d["payload"].get("info", {}).get("total_token_usage")
+                    usage = d["payload"].get("info", {}).get("total_token_usage")
+                    if not usage:
+                        continue
+                    event_ts = ts_of(d)
+                    if since_ts > 0 and event_ts > 0 and event_ts < since_ts:
+                        baseline = {key: usage.get(key, 0) for key in usage_fields}
+                    elif since_ts == 0 or event_ts == 0 or event_ts >= since_ts:
+                        last = usage
         except Exception:
             continue
         if last:
             sessions += 1
-            raw_in = last.get("input_tokens", 0)
-            cached += last.get("cached_input_tokens", 0)
+            # token_count 是 session 累计值；时间窗统计必须减去窗口开始前的累计基线。
+            delta = {
+                key: max(0, last.get(key, 0) - baseline.get(key, 0))
+                for key in usage_fields
+            }
+            raw_in = delta["input_tokens"]
+            cached += delta["cached_input_tokens"]
             # OpenAI 惯例: input_tokens 含 cached, 统一为非缓存口径
-            inp += max(0, raw_in - last.get("cached_input_tokens", 0))
-            outp += last.get("output_tokens", 0)
-            reas += last.get("reasoning_output_tokens", 0)
+            inp += max(0, raw_in - delta["cached_input_tokens"])
+            outp += delta["output_tokens"]
+            reas += delta["reasoning_output_tokens"]
     return {"input": inp, "cacheRead": cached, "output": outp, "reasoning": reas, "sessions": sessions}
 
 def collect_claude(since_ts):

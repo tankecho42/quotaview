@@ -1,5 +1,6 @@
 package com.tankecho.quotaview
 
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
@@ -19,6 +20,7 @@ class QVNotificationListener : NotificationListenerService() {
     }
 
     private fun handle(sbn: StatusBarNotification) {
+        if (Build.VERSION.SDK_INT < 36) return
         if (sbn.packageName != packageName) return
         if (sbn.id != IslandService.LIVE_NOTI_ID) return   // 只看 Live 通知
         val n = sbn.notification
