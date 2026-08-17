@@ -167,4 +167,28 @@ class ProvidersTest {
         assertEquals(110.0, status.balances.single().amount, 0.0001)
         assertTrue(status.balances.single().detail!!.contains("赠送"))
     }
+
+    @Test
+    fun budgetMathProportionallyAttributesSpendAcrossRollingWindows() {
+        val hour = 60L * 60 * 1000
+        val now = 10L * 24 * hour
+        val events = listOf(SpendInterval(now - 48 * hour, now, 20.0))
+
+        assertEquals(10.0, BudgetMath.spentInWindow(events, now, 24 * hour), 0.0001)
+        assertEquals(20.0, BudgetMath.spentInWindow(events, now, 7 * 24 * hour), 0.0001)
+    }
+
+    @Test
+    fun budgetPercentCanExceedOneHundred() {
+        val budget = BudgetWindow(
+            label = "24H 预算",
+            spent = 13.5,
+            limit = 10.0,
+            currency = "CNY",
+            periodSeconds = 86_400,
+            observedSince = 1,
+        )
+
+        assertEquals(135, budget.usedPercent)
+    }
 }

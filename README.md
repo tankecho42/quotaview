@@ -4,7 +4,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 
 ## 当前基线
 
-- 版本：0.13.1（versionCode 41）
+- 版本：0.13.2（versionCode 42）
 - Android：minSdk 26，targetSdk / compileSdk 36
 - UI：Kotlin 纯代码 View，无 Compose/XML layout
 - 数据：App 直连各 Provider 的额度或余额端点，不经过中间服务器
@@ -19,7 +19,7 @@ Android 16 Live Updates 与 OPPO 流体云在 ColorOS 16 上已完成真机终�
 - Kimi Code：Coding Plan 额度窗口
 - Claude：Claude.ai OAuth 套餐额度窗口
 - MiniMax：Coding Plan 额度窗口（中国区 / 国际区）
-- DeepSeek：官方 API 账户余额
+- DeepSeek：官方 API 账户余额 + 用户自定义 24H / 7D / 30D 预算（基于本机余额采样估算滚动支出，允许超过 100%）
 - Qwen / 阿里云百炼：官方尚未开放剩余额度查询 API，设置页明确标记为待开放
 
 Provider 品牌图标统一采用 MIT 许可的 [Lobe Icons](https://github.com/lobehub/lobe-icons)，具体归属见 `THIRD_PARTY_NOTICES.md`。

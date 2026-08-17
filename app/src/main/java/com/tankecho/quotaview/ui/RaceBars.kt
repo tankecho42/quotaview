@@ -22,6 +22,13 @@ class RaceBars @JvmOverloads constructor(
     var timePercent: Int = 0
         private set
 
+    var showTimeBar: Boolean = true
+        set(value) {
+            field = value
+            requestLayout()
+            invalidate()
+        }
+
     /** 用于颜色: 额度条是否处于超速状态 */
     var overheated: Boolean = false
         set(v) { field = v; invalidate(); }
@@ -42,7 +49,7 @@ class RaceBars @JvmOverloads constructor(
 
     /** 同一帧更新两条进度，只启动一次动画，避免连续 setter 互相取消。 */
     fun setProgress(usedPercent: Int, timePercent: Int) {
-        this.usedPercent = usedPercent.coerceIn(0, 100)
+        this.usedPercent = usedPercent.coerceAtLeast(0)
         this.timePercent = timePercent.coerceIn(0, 100)
         animateTo()
     }
@@ -51,7 +58,7 @@ class RaceBars @JvmOverloads constructor(
         animator?.cancel()
         val startUsed = displayUsed
         val startTime = displayTime
-        val targetUsed = usedPercent.toFloat()
+        val targetUsed = usedPercent.coerceAtMost(100).toFloat()
         val targetTime = timePercent.toFloat()
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 450
@@ -85,19 +92,21 @@ class RaceBars @JvmOverloads constructor(
             canvas.drawRoundRect(clipRect, cornerRadius, cornerRadius, usedPaint)
         }
 
-        // time bar
-        val ty = barHeight + gap
-        clipRect.set(0f, ty, w, ty + smallBarHeight)
-        canvas.drawRoundRect(clipRect, smallBarHeight / 2, smallBarHeight / 2, trackPaint)
-        val timeW = w * displayTime / 100f
-        if (timeW > 0f) {
-            clipRect.set(0f, ty, timeW.coerceAtLeast(smallBarHeight), ty + smallBarHeight)
-            canvas.drawRoundRect(clipRect, smallBarHeight / 2, smallBarHeight / 2, timePaint)
+        if (showTimeBar) {
+            // time bar
+            val ty = barHeight + gap
+            clipRect.set(0f, ty, w, ty + smallBarHeight)
+            canvas.drawRoundRect(clipRect, smallBarHeight / 2, smallBarHeight / 2, trackPaint)
+            val timeW = w * displayTime / 100f
+            if (timeW > 0f) {
+                clipRect.set(0f, ty, timeW.coerceAtLeast(smallBarHeight), ty + smallBarHeight)
+                canvas.drawRoundRect(clipRect, smallBarHeight / 2, smallBarHeight / 2, timePaint)
+            }
         }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val totalH = (barHeight + gap + smallBarHeight).roundToInt()
+        val totalH = (if (showTimeBar) barHeight + gap + smallBarHeight else barHeight).roundToInt()
         setMeasuredDimension(
             getDefaultSize(suggestedMinimumWidth, widthMeasureSpec),
             resolveSize(totalH, heightMeasureSpec)

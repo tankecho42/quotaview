@@ -38,8 +38,9 @@ data class ProviderStatus(
     val updatedAt: Long,
     val error: String? = null,
     val balances: List<BalanceMetric> = emptyList(),
+    val budgets: List<BudgetWindow> = emptyList(),
 ) {
-    val hasData: Boolean get() = windows.isNotEmpty() || balances.isNotEmpty()
+    val hasData: Boolean get() = windows.isNotEmpty() || balances.isNotEmpty() || budgets.isNotEmpty()
 }
 
 /** 无法换算成百分比的账户余额；与订阅额度窗口分开展示，避免伪造进度。 */
@@ -49,6 +50,20 @@ data class BalanceMetric(
     val currency: String,
     val detail: String? = null,
 )
+
+/** 用户自定义预算与本机观测支出。usedPercent 不封顶，可真实显示超预算比例。 */
+data class BudgetWindow(
+    val label: String,
+    val spent: Double,
+    val limit: Double,
+    val currency: String,
+    val periodSeconds: Long,
+    val observedSince: Long,
+) {
+    val usedPercent: Int
+        get() = if (limit <= 0) 0 else ((spent / limit) * 100)
+            .roundToInt().coerceIn(0, 999_999)
+}
 
 // ---------- Codex (ChatGPT Plan) ----------
 

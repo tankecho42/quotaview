@@ -15,6 +15,7 @@ import com.tankecho.quotaview.data.CodexApi
 import com.tankecho.quotaview.data.ClaudeApi
 import com.tankecho.quotaview.data.CostSimulator
 import com.tankecho.quotaview.data.DeepSeekApi
+import com.tankecho.quotaview.data.DeepSeekBudgetTracker
 import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
@@ -124,7 +125,9 @@ class MainActivity : AppCompatActivity() {
                     }.getOrNull() },
                     async { runCatching {
                         val key = prefs.getString("deepseek_key", "").orEmpty()
-                        if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) DeepSeekApi.fetch(key) else null
+                        if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) {
+                            DeepSeekBudgetTracker.recordAndApply(prefs, key, DeepSeekApi.fetch(key))
+                        } else null
                     }.getOrNull() },
                     ).awaitAll().filterNotNull()
                 }
@@ -271,6 +274,46 @@ class MainActivity : AppCompatActivity() {
             metric.detail?.let {
                 body.addView(tv(it, 12, 0xFF6F7482.toInt(), bottom = 10))
             }
+        }
+        st.budgets.forEach { budget ->
+            body.addView(tv(budget.label, 14, 0xFF8A8F9E.toInt(), bold = true))
+            val race = RaceBars(this).apply {
+                showTimeBar = false
+                setProgress(budget.usedPercent, 0)
+                overheated = budget.usedPercent >= 100
+            }
+            body.addView(race, vlp(top = 6, bottom = 4, height = dp(18)))
+
+            val dotColor = when {
+                budget.usedPercent >= 100 -> 0xFFE5484D.toInt()
+                budget.usedPercent >= 80 -> 0xFFF5A524.toInt()
+                else -> 0xFF3DD68C.toInt()
+            }
+            val line = "● 支出 ${formatBalance(budget.spent, budget.currency)} / " +
+                "预算 ${formatBalance(budget.limit, budget.currency)} · ${budget.usedPercent}%"
+            val span = android.text.SpannableString(line).apply {
+                setSpan(android.text.style.ForegroundColorSpan(dotColor), 0, 1,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(android.text.style.RelativeSizeSpan(0.8f), 0, 1,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            body.addView(TextView(this).apply {
+                text = span
+                textSize = 13f
+                setTextColor(0xFFB4B9C6.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(12) }
+            })
+        }
+        st.budgets.minOfOrNull { it.observedSince }?.let { observedSince ->
+            body.addView(tv(
+                "本机观测 · 记录始于 ${fmtReset.format(Date(observedSince * 1000))} · 充值不冲减支出",
+                12,
+                0xFF6F7482.toInt(),
+                bottom = 4,
+            ))
         }
         section.addView(body)
         if (collapsed.contains(st.id)) { body.visibility = View.GONE; chevron.text = "▸" }

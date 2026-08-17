@@ -37,7 +37,15 @@ class SettingsActivity : AppCompatActivity() {
 
     private var previewJob: Job? = null
     private lateinit var ringPreview: com.tankecho.quotaview.ui.DualRingView
-    private data class FieldDef(val key: String, val label: String, val hint: String, val multiline: Boolean = false, val secret: Boolean = false)
+    private data class FieldDef(
+        val key: String,
+        val label: String,
+        val hint: String,
+        val multiline: Boolean = false,
+        val secret: Boolean = false,
+        val required: Boolean = true,
+        val numeric: Boolean = false,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,9 +111,12 @@ class SettingsActivity : AppCompatActivity() {
             )
         })
 
-        root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方 API · 账户余额",
+        root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方余额 · 本机预算追踪",
             listOf(
                 FieldDef("deepseek_key", "API key", "platform.deepseek.com 的 API key", secret = true),
+                FieldDef("deepseek_budget_24h", "24H 预算", "例如 20；留空则不显示", required = false, numeric = true),
+                FieldDef("deepseek_budget_7d", "7D 预算", "例如 100；留空则不显示", required = false, numeric = true),
+                FieldDef("deepseek_budget_30d", "30D 预算", "例如 300；留空则不显示", required = false, numeric = true),
             ), defaultEnabled = false) {
             DeepSeekApi.fetch(prefs.getString("deepseek_key", "").orEmpty())
         })
@@ -181,7 +192,18 @@ class SettingsActivity : AppCompatActivity() {
         }
         fields.forEach { f ->
             body.addView(fieldLabel(f.label))
-            body.addView(input(prefs, f.key, f.hint, f.multiline, f.secret))
+            body.addView(input(prefs, f.key, f.hint, f.multiline, f.secret, f.numeric))
+        }
+        if (id == "deepseek") {
+            body.addView(TextView(this).apply {
+                text = "预算金额与账户余额币种一致。支出按本机余额采样估算；充值只更新余额基线，不冲减已观测支出。"
+                textSize = 12f
+                setTextColor(0xFF6F7482.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(10) }
+            })
         }
         card.addView(body)
         if (!hasConfig) body.visibility = View.GONE else chevron.text = "▾"
@@ -196,7 +218,7 @@ class SettingsActivity : AppCompatActivity() {
         sw.setOnCheckedChangeListener { _, checked ->
             validationJob?.cancel()
             if (checked) {
-                val missing = fields.any { prefs.getString(it.key, "").isNullOrBlank() }
+                val missing = fields.any { it.required && prefs.getString(it.key, "").isNullOrBlank() }
                 if (missing) {
                     sw.isChecked = false
                     Toast.makeText(this, "$title 还没填完整配置", Toast.LENGTH_SHORT).show()
@@ -675,7 +697,14 @@ class SettingsActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
     }
 
-    private fun input(prefs: SharedPreferences, key: String, hint: String, multiline: Boolean = false, secret: Boolean = false): EditText = EditText(this).apply {
+    private fun input(
+        prefs: SharedPreferences,
+        key: String,
+        hint: String,
+        multiline: Boolean = false,
+        secret: Boolean = false,
+        numeric: Boolean = false,
+    ): EditText = EditText(this).apply {
         setText(prefs.getString(key, ""))
         this.hint = hint
         setHintTextColor(0xFF4A4F5C.toInt())
@@ -683,7 +712,9 @@ class SettingsActivity : AppCompatActivity() {
         textSize = 14f
         background.alpha = 30
         setPadding(dp(12), dp(10), dp(12), dp(10))
-        if (multiline) {
+        if (numeric) {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        } else if (multiline) {
             minLines = 3
             gravity = Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
