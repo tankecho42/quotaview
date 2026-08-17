@@ -27,6 +27,7 @@ import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
+import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -594,7 +595,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun providerMark(id: String, iconRes: Int, sizeDp: Int): View {
-        if (iconRes != 0) return android.widget.ImageView(this).apply { setImageResource(iconRes) }
+        val resolvedIcon = iconRes.takeIf { it != 0 } ?: ProviderIcons.icon(id)
+        if (resolvedIcon != 0) return android.widget.ImageView(this).apply { setImageResource(resolvedIcon) }
         val (letter, color) = when (id) {
             "kimi" -> "K" to 0xFF7357D9.toInt()
             "claude" -> "C" to 0xFFD97757.toInt()
@@ -616,11 +618,7 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun providerIcon(id: String): Int = when (id) {
-        "codex" -> R.drawable.ic_openai
-        "glm" -> R.drawable.ic_zai
-        else -> 0
-    }
+    private fun providerIcon(id: String): Int = ProviderIcons.icon(id)
 
     private fun providerInitial(id: String): String = when (id) {
         "kimi" -> "K"

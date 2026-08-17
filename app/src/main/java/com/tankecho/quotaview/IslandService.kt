@@ -29,6 +29,7 @@ import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.ui.DualRingView
+import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -706,11 +707,7 @@ class IslandService : Service() {
         else -> id
     }
 
-    private fun providerIcon(id: String): Int = when (id) {
-        "codex" -> R.drawable.ic_openai
-        "glm" -> R.drawable.ic_zai
-        else -> 0
-    }
+    private fun providerIcon(id: String): Int = ProviderIcons.icon(id)
 
     private fun providerInitial(id: String): String = when (id) {
         "kimi" -> "K"

@@ -23,6 +23,7 @@ import com.tankecho.quotaview.data.QuotaWindow
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.tankecho.quotaview.ui.RaceBars
+import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -279,11 +280,7 @@ class MainActivity : AppCompatActivity() {
     // ---------- 小工具 ----------
 
     private fun providerMark(id: String, sizeDp: Int): View {
-        val icon = when (id) {
-            "codex" -> R.drawable.ic_openai
-            "glm" -> R.drawable.ic_zai
-            else -> 0
-        }
+        val icon = ProviderIcons.icon(id)
         if (icon != 0) return android.widget.ImageView(this).apply { setImageResource(icon) }
         val (letter, color) = when (id) {
             "kimi" -> "K" to 0xFF7357D9.toInt()
