@@ -80,7 +80,7 @@ class OverlayService : Service() {
 
     private val ringSize: Int get() = (52 * dp).toInt()
     private val barW: Int get() = (11 * dp).toInt()        // 视觉宽
-    private val barH: Int get() = (72 * dp).toInt()        // 视觉高 (缩短)
+    private val barH: Int get() = (48 * dp).toInt()        // 视觉高（较上一版缩短 1/3）
     private val hostW: Int get() = (30 * dp).toInt()       // 触摸热区 (加宽, 好按好拖)
     private val hostH: Int get() = (barH + (14 * dp).toInt())
 
