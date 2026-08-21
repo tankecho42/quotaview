@@ -49,5 +49,31 @@ class ProviderOrderingTest {
         assertEquals(listOf("deepseek", "codex", "zai"), preview)
     }
 
+    @Test
+    fun `applying visible drag order retains disabled provider slots`() {
+        val reordered = ProviderOrdering.applyVisibleOrder(
+            saved = null,
+            visibleOrder = listOf("deepseek", "codex", "zai"),
+        )
+
+        assertEquals(listOf("deepseek", "codex", "zai"), reordered.filter { it in setOf("codex", "zai", "deepseek") })
+        assertEquals(ProviderOrdering.defaultIds.toSet(), reordered.toSet())
+        assertEquals("glm", reordered[1])
+    }
+
+    @Test
+    fun `slot insertion is symmetric when dragging upward and downward`() {
+        val visible = listOf("codex", "glm", "zai", "deepseek")
+
+        assertEquals(
+            listOf("codex", "deepseek", "glm", "zai"),
+            ProviderOrdering.insertVisible(visible, "deepseek", 1),
+        )
+        assertEquals(
+            listOf("glm", "zai", "codex", "deepseek"),
+            ProviderOrdering.insertVisible(visible, "codex", 2),
+        )
+    }
+
     private fun status(id: String) = ProviderStatus(id, id, "?", emptyList(), 0)
 }

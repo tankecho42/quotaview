@@ -4,7 +4,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 
 ## 当前基线
 
-- 版本：0.15.2（versionCode 53）
+- 版本：0.15.3（versionCode 54）
 - Android：minSdk 26，targetSdk / compileSdk 36
 - UI：Kotlin 纯代码 View，无 Compose/XML layout；主页支持折叠列表与响应式圆环卡片，Provider 固定顺序并可长按拖拽、实时让位排序
 - 数据：App 直连各 Provider 的额度或余额端点，不经过中间服务器；各 Provider 独立异步刷新，完成即展示且失败互不影响

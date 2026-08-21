@@ -54,5 +54,26 @@ object ProviderOrdering {
         return move(saved, draggedId, targetId, placeAfter).filter(visible::contains)
     }
 
+    /** Replaces only visible slots, retaining disabled providers at their existing positions. */
+    fun applyVisibleOrder(saved: String?, visibleOrder: List<String>): List<String> {
+        val order = resolve(saved).toMutableList()
+        val visibleIds = visibleOrder.filter(order::contains).distinct()
+        val visibleSet = visibleIds.toSet()
+        val replacements = visibleIds.iterator()
+        order.indices.forEach { index ->
+            if (order[index] in visibleSet && replacements.hasNext()) {
+                order[index] = replacements.next()
+            }
+        }
+        return order
+    }
+
+    fun insertVisible(visibleIds: List<String>, draggedId: String, insertionIndex: Int): List<String> {
+        val withoutDragged = visibleIds.filterNot { it == draggedId }.toMutableList()
+        if (draggedId !in visibleIds) return visibleIds
+        withoutDragged.add(insertionIndex.coerceIn(0, withoutDragged.size), draggedId)
+        return withoutDragged
+    }
+
     fun encode(order: List<String>): String = order.joinToString(",")
 }

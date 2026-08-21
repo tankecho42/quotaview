@@ -41,6 +41,7 @@ data class ProviderStatus(
     val budgets: List<BudgetWindow> = emptyList(),
     val detailMessage: String? = null,
     val detailMessageIsError: Boolean = false,
+    val isLoading: Boolean = false,
 ) {
     val hasData: Boolean get() = windows.isNotEmpty() || balances.isNotEmpty() || budgets.isNotEmpty()
 }
