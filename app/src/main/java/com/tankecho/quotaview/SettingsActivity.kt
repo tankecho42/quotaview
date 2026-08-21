@@ -32,6 +32,7 @@ import com.tankecho.quotaview.data.ProviderMetricOption
 import com.tankecho.quotaview.data.ProviderMetrics
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.VolcengineArkApi
+import com.tankecho.quotaview.data.ZaiApi
 import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.Dispatchers
@@ -99,6 +100,13 @@ class SettingsActivity : AppCompatActivity() {
             listOf(
                 FieldDef("glm_key", "API key", "open.bigmodel.cn 的 API key", secret = true),
             )) { GlmApi.fetch(prefs.getString("glm_key", "").orEmpty()) })
+
+        root.addView(providerCard(prefs, "zai", R.drawable.ic_zai, "Z.AI Coding Plan", "国际版 · 5h / 周 / MCP 额度",
+            listOf(
+                FieldDef("zai_key", "Z.AI API key", "z.ai/manage-apikey 的国际版 API key", secret = true),
+            ), defaultEnabled = false) {
+            ZaiApi.fetch(prefs.getString("zai_key", "").orEmpty())
+        })
 
         root.addView(providerCard(prefs, "kimi", 0, "Kimi Code", "Coding Plan · 5h / 周额度",
             listOf(
@@ -329,7 +337,7 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 prefs.edit().putBoolean("show_$id", false).apply()
                 if (prefs.getString("ring_provider", "codex") == id) {
-                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax", "volcengine", "deepseek")
+                    val fallback = listOf("codex", "glm", "zai", "kimi", "claude", "minimax", "volcengine", "deepseek")
                         .firstOrNull { it != id && ringProviderReady(prefs, it) }
                     if (fallback != null) {
                         prefs.edit().putString("ring_provider", fallback).apply()
@@ -549,7 +557,7 @@ class SettingsActivity : AppCompatActivity() {
             val cur = prefs.getString("ring_provider", "codex")
             provRow.removeAllViews()
             listOf(
-                "Codex" to "codex", "GLM" to "glm", "Kimi" to "kimi",
+                "Codex" to "codex", "GLM" to "glm", "Z.AI" to "zai", "Kimi" to "kimi",
                 "Claude" to "claude", "MiniMax" to "minimax", "火山方舟" to "volcengine",
                 "DeepSeek" to "deepseek",
             ).forEach { (name, id) ->
@@ -605,6 +613,7 @@ class SettingsActivity : AppCompatActivity() {
                     when (prov) {
                         "codex" -> CodexApi.fetch(prefs.getString("codex_token", "").orEmpty(), prefs.getString("codex_account", "").orEmpty())
                         "glm" -> GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+                        "zai" -> ZaiApi.fetch(prefs.getString("zai_key", "").orEmpty())
                         "kimi" -> KimiApi.fetch(prefs.getString("kimi_key", "").orEmpty())
                         "claude" -> ClaudeApi.fetch(prefs.getString("claude_token", "").orEmpty())
                         "minimax" -> MiniMaxApi.fetch(
@@ -719,6 +728,7 @@ class SettingsActivity : AppCompatActivity() {
         "qwen" -> "Q"
         "volcengine" -> "V"
         "deepseek" -> "D"
+        "zai" -> "Z"
         else -> "?"
     }
 
@@ -733,6 +743,7 @@ class SettingsActivity : AppCompatActivity() {
         val credentialKey = when (id) {
             "codex" -> "codex_token"
             "glm" -> "glm_key"
+            "zai" -> "zai_key"
             "kimi" -> "kimi_key"
             "claude" -> "claude_token"
             "minimax" -> "minimax_key"

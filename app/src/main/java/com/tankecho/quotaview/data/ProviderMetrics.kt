@@ -13,7 +13,7 @@ object ProviderMetrics {
             ProviderMetricOption("周窗口", "week"),
             ProviderMetricOption("附加额度", "additional"),
         )
-        "glm" -> listOf(
+        "glm", "zai" -> listOf(
             ProviderMetricOption("主窗口", "primary"),
             ProviderMetricOption("周窗口", "week"),
             ProviderMetricOption("MCP 工具", "mcp"),

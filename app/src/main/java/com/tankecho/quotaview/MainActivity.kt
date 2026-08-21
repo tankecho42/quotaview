@@ -31,6 +31,7 @@ import com.tankecho.quotaview.data.ProviderRefreshRequest
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.data.VolcengineArkApi
+import com.tankecho.quotaview.data.ZaiApi
 import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
 import com.tankecho.quotaview.ui.RaceBars
@@ -230,6 +231,13 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean("show_glm", true) && glmKey.isNotBlank()) {
             add(ProviderRefreshRequest("glm", "GLM Coding Plan") {
                 withContext(Dispatchers.IO) { GlmApi.fetch(glmKey) }
+            })
+        }
+
+        val zaiKey = prefs.getString("zai_key", "").orEmpty()
+        if (prefs.getBoolean("show_zai", false) && zaiKey.isNotBlank()) {
+            add(ProviderRefreshRequest("zai", "Z.AI Coding Plan") {
+                withContext(Dispatchers.IO) { ZaiApi.fetch(zaiKey) }
             })
         }
 

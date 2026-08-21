@@ -8,7 +8,7 @@ object ProviderIcons {
     @DrawableRes
     fun icon(id: String): Int = when (id) {
         "codex" -> R.drawable.ic_openai
-        "glm" -> R.drawable.ic_zai
+        "glm", "zai" -> R.drawable.ic_zai
         "kimi" -> R.drawable.ic_kimi
         "claude" -> R.drawable.ic_claude
         "qwen" -> R.drawable.ic_qwen

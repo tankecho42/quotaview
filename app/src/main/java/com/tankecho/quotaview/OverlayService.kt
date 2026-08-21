@@ -32,6 +32,7 @@ import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.data.VolcengineArkApi
+import com.tankecho.quotaview.data.ZaiApi
 import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
@@ -728,6 +729,7 @@ class OverlayService : Service() {
             prefs.getString("codex_account", "").orEmpty(),
         )
         "glm" -> GlmApi.fetch(prefs.getString("glm_key", "").orEmpty())
+        "zai" -> ZaiApi.fetch(prefs.getString("zai_key", "").orEmpty())
         "kimi" -> KimiApi.fetch(prefs.getString("kimi_key", "").orEmpty())
         "claude" -> ClaudeApi.fetch(prefs.getString("claude_token", "").orEmpty())
         "minimax" -> MiniMaxApi.fetch(
@@ -754,6 +756,7 @@ class OverlayService : Service() {
     private fun providerName(id: String): String = when (id) {
         "codex" -> "Codex"
         "glm" -> "GLM"
+        "zai" -> "Z.AI"
         "kimi" -> "Kimi Code"
         "claude" -> "Claude"
         "minimax" -> "MiniMax"
@@ -770,6 +773,7 @@ class OverlayService : Service() {
         "minimax" -> "M"
         "volcengine" -> "V"
         "deepseek" -> "D"
+        "zai" -> "Z"
         else -> "?"
     }
 

@@ -72,6 +72,31 @@ class ProvidersTest {
     }
 
     @Test
+    fun zaiParseKeepsInternationalIdentityAndSupportsCreditLimits() {
+        val status = ZaiApi.parse(
+            """
+            {
+              "code": 200,
+              "data": {
+                "level": "pro",
+                "limits": [
+                  {"type":"CREDIT_LIMIT","unit":6,"percentage":38,"nextResetTime":2000604800000},
+                  {"type":"CREDIT_LIMIT","unit":3,"percentage":12,"nextResetTime":2000018000000},
+                  {"type":"TIME_LIMIT","unit":5,"usage":1000,"currentValue":25,"remaining":975,"percentage":3}
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("zai", status.id)
+        assertEquals("Z.AI Coding Plan", status.name)
+        assertEquals("Pro", status.plan)
+        assertEquals(listOf("primary", "week", "mcp"), status.windows.map { it.selectionKey })
+        assertEquals(listOf(12, 38, 3), status.windows.map { it.usedPercent })
+    }
+
+    @Test
     fun quotaWindowCalculatesPaceFromElapsedTime() {
         val now = now()
         val window = QuotaWindow(

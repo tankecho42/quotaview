@@ -150,7 +150,79 @@ object CodexApi {
     }
 }
 
-// ---------- GLM Coding Plan ----------
+// ---------- GLM / Z.AI Coding Plan ----------
+
+private object GlmCodingPlanParser {
+    private val UNIT_HOURS = mapOf(
+        1 to 1L,      // hour? (unverified)
+        2 to 24L,     // day?
+        3 to 5L,      // 5h rolling window
+        4 to 24L,     // day
+        5 to 24L,
+        6 to 168L,    // week
+    )
+
+    fun parse(body: String, id: String, name: String): ProviderStatus {
+        val root = JSONObject(body)
+        val data = root.optJSONObject("data")
+            ?: return ProviderStatus(id, name, "?", emptyList(), now(), "no data")
+        val level = when (data.optString("level")) {
+            "lite" -> "Lite"
+            "pro" -> "Pro"
+            "max" -> "Max"
+            else -> data.optString("level").ifBlank { "?" }
+        }
+        val windows = mutableListOf<QuotaWindow>()
+        val limits = data.optJSONArray("limits")
+            ?: return ProviderStatus(id, name, level, emptyList(), now())
+        // Older plans use TOKENS_LIMIT; newer plans may expose equivalent CREDIT_LIMIT rows.
+        val quotaLimits = mutableListOf<JSONObject>()
+        var toolLimit: JSONObject? = null
+        for (i in 0 until limits.length()) {
+            val limit = limits.getJSONObject(i)
+            when (limit.optString("type")) {
+                "TOKENS_LIMIT", "CREDIT_LIMIT" -> quotaLimits.add(limit)
+                "TIME_LIMIT" -> toolLimit = limit
+            }
+        }
+        quotaLimits.sortBy { UNIT_HOURS[it.optInt("unit", 0)] ?: Long.MAX_VALUE }
+        quotaLimits.forEachIndexed { index, limit ->
+            val hours = UNIT_HOURS[limit.optInt("unit", 0)] ?: 0L
+            windows.add(QuotaWindow(
+                label = when (hours) {
+                    5L -> "5h 窗口"
+                    168L -> "周窗口"
+                    else -> "窗口${index + 1}"
+                },
+                usedPercent = limit.optInt("percentage", 0),
+                resetAt = limit.optLong("nextResetTime", 0) / 1000,
+                windowSeconds = hours * 3600,
+                selectionKey = if (hours == 168L) "week" else "primary",
+            ))
+        }
+        toolLimit?.let { limit ->
+            val quota = limit.optInt("usage", 0)
+            val used = limit.optInt("currentValue", 0)
+            val remaining = limit.optInt("remaining", 0)
+            val percentage = limit.optInt("percentage", 0)
+            val usedPercent = when {
+                percentage > 0 -> percentage
+                quota > 0 -> used * 100 / quota
+                remaining > 0 -> 0
+                else -> 0
+            }
+            windows.add(QuotaWindow(
+                label = "MCP 工具" + if (quota > 0) " · 余${remaining}" else "",
+                usedPercent = usedPercent,
+                resetAt = limit.optLong("nextResetTime", 0) / 1000,
+                windowSeconds = 0,
+                kind = QuotaWindow.Kind.TOOL_CALLS,
+                selectionKey = "mcp",
+            ))
+        }
+        return ProviderStatus(id, name, level, windows, now())
+    }
+}
 
 object GlmApi {
     // 实测 2026-08-14: GET /api/monitor/usage/quota/limit, Bearer GLM_API_KEY
@@ -173,78 +245,33 @@ object GlmApi {
         }
     }
 
-    private val UNIT_HOURS = mapOf(
-        1 to 1L,      // hour? (unverified)
-        2 to 24L,     // day?
-        3 to 5L,      // 5h 滚动窗 (实测 2026-08-14)
-        4 to 24L,     // day
-        5 to 24L,
-        6 to 168L,    // week (实测 2026-08-14)
-    )
+    fun parse(body: String): ProviderStatus =
+        GlmCodingPlanParser.parse(body, "glm", "GLM Coding Plan")
+}
 
-    fun parse(body: String): ProviderStatus {
-        val root = JSONObject(body)
-        val data = root.optJSONObject("data") ?: return ProviderStatus("glm", "GLM Coding Plan", "?", emptyList(), now(), "no data")
-        val level = when (data.optString("level")) {
-            "lite" -> "Lite"
-            "pro" -> "Pro"
-            "max" -> "Max"
-            else -> data.optString("level").ifBlank { "?" }
+object ZaiApi {
+    // Z.AI official usage plugin uses this monitor endpoint and sends the API key as-is.
+    fun fetch(key: String): ProviderStatus {
+        val conn = URL("https://api.z.ai/api/monitor/usage/quota/limit").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Authorization", key)
+            conn.setRequestProperty("Accept-Language", "en-US,en")
+            conn.setRequestProperty("Accept", "application/json")
+            val code = conn.responseCode
+            if (code != 200) return ProviderStatus("zai", "Z.AI Coding Plan", "?", emptyList(), now(), "HTTP $code")
+            parse(conn.inputStream.bufferedReader().readText())
+        } catch (error: Exception) {
+            ProviderStatus("zai", "Z.AI Coding Plan", "?", emptyList(), now(), error.message ?: "network error")
+        } finally {
+            conn.disconnect()
         }
-        val windows = mutableListOf<QuotaWindow>()
-        val limits = data.optJSONArray("limits") ?: return ProviderStatus("glm", "GLM Coding Plan", level, emptyList(), now())
-        // TOKENS_LIMIT: 短窗在前(主), 长窗在后(辅)
-        val tokenLimits = mutableListOf<JSONObject>()
-        var toolLimit: JSONObject? = null
-        for (i in 0 until limits.length()) {
-            val lim = limits.getJSONObject(i)
-            when (lim.optString("type")) {
-                "TOKENS_LIMIT" -> tokenLimits.add(lim)
-                "TIME_LIMIT" -> toolLimit = lim
-            }
-        }
-        tokenLimits.sortBy { it.optLong("nextResetTime", 0) }
-        tokenLimits.forEachIndexed { idx, lim ->
-            val unit = lim.optInt("unit", 0)
-            val hours = UNIT_HOURS[unit] ?: 0L
-            windows.add(QuotaWindow(
-                label = when {
-                    hours == 5L -> "5h 窗口"
-                    hours == 168L -> "周窗口"
-                    else -> "窗口${idx + 1}"
-                },
-                usedPercent = lim.optInt("percentage", 0),
-                resetAt = lim.optLong("nextResetTime", 0) / 1000,  // ms → s
-                windowSeconds = hours * 3600,
-                selectionKey = when (hours) {
-                    168L -> "week"
-                    else -> "primary"
-                },
-            ))
-        }
-        toolLimit?.let { tl ->
-            // 实测语义: usage=总额度, currentValue=已用, remaining=剩余, percentage=已用%
-            val quota = tl.optInt("usage", 0)
-            val used = tl.optInt("currentValue", 0)
-            val remaining = tl.optInt("remaining", 0)
-            val pct = tl.optInt("percentage", 0)
-            val usedPct = when {
-                pct > 0 -> pct
-                quota > 0 -> used * 100 / quota
-                remaining > 0 -> 0
-                else -> 0
-            }
-            windows.add(QuotaWindow(
-                label = "MCP 工具" + if (quota > 0) " · 余${remaining}" else "",
-                usedPercent = usedPct,
-                resetAt = tl.optLong("nextResetTime", 0) / 1000,
-                windowSeconds = 0,  // 月度，未知时长 → PACE 不算
-                kind = QuotaWindow.Kind.TOOL_CALLS,
-                selectionKey = "mcp",
-            ))
-        }
-        return ProviderStatus("glm", "GLM Coding Plan", level, windows, now())
     }
+
+    fun parse(body: String): ProviderStatus =
+        GlmCodingPlanParser.parse(body, "zai", "Z.AI Coding Plan")
 }
 
 // ---------- Kimi Code ----------

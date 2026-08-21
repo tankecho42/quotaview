@@ -4,7 +4,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 
 ## 当前基线
 
-- 版本：0.14.1（versionCode 50）
+- 版本：0.15.0（versionCode 51）
 - Android：minSdk 26，targetSdk / compileSdk 36
 - UI：Kotlin 纯代码 View，无 Compose/XML layout；主页支持折叠列表与响应式圆环卡片
 - 数据：App 直连各 Provider 的额度或余额端点，不经过中间服务器；各 Provider 独立异步刷新，完成即展示且失败互不影响
@@ -16,6 +16,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 
 - Codex：ChatGPT 套餐额度窗口
 - GLM：Coding Plan 额度窗口与 MCP 工具额度
+- Z.AI：智谱国际版 Coding Plan 的 5h / 周窗口与 MCP 工具额度
 - Kimi Code：Coding Plan 额度窗口
 - Claude：Claude.ai OAuth 套餐额度窗口
 - MiniMax：Coding Plan 额度窗口（中国区 / 国际区）
