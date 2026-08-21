@@ -1,10 +1,13 @@
 package com.tankecho.quotaview
 
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.view.DragEvent
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -26,6 +29,7 @@ import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderMetrics
+import com.tankecho.quotaview.data.ProviderOrdering
 import com.tankecho.quotaview.data.ProviderRefreshCoordinator
 import com.tankecho.quotaview.data.ProviderRefreshRequest
 import com.tankecho.quotaview.data.ProviderStatus
@@ -45,6 +49,8 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    private data class ProviderDragState(val id: String, val source: View)
+
     private var refreshJob: Job? = null
     private lateinit var prefs: SharedPreferences
     private lateinit var root: LinearLayout
@@ -54,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private var refreshGeneration = 0L
     private var providersRefreshing = false
     private var lastStatuses: List<ProviderStatus> = emptyList()
+    private var activeProviderDrag: ProviderDragState? = null
+    private var pendingDragStatuses: List<ProviderStatus>? = null
     private val collapsed = mutableSetOf<String>()
     private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         settingsOpen = false
@@ -294,10 +302,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun render(statuses: List<ProviderStatus>) {
         lastStatuses = statuses
+        if (activeProviderDrag != null) {
+            pendingDragStatuses = statuses
+            return
+        }
         root.removeAllViews()
         root.addView(homeViewSwitcher())
 
-        val visible = statuses.filter { prefs.getBoolean("show_${it.id}", it.id == "codex" || it.id == "glm") }
+        val visible = ProviderOrdering.sort(
+            statuses.filter { prefs.getBoolean("show_${it.id}", it.id == "codex" || it.id == "glm") },
+            prefs.getString(PROVIDER_ORDER_KEY, null),
+        )
         if (visible.isEmpty()) {
             val message = if (providersRefreshing) {
                 "正在并行刷新 Provider…\n\n完成一个就会立即显示"
@@ -348,7 +363,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(2))
             addView(TextView(this@MainActivity).apply {
-                text = "主页视图"
+                text = "主页视图 · 长按拖拽排序"
                 textSize = 12f
                 setTextColor(0xFF697184.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -490,7 +505,7 @@ class MainActivity : AppCompatActivity() {
                     ).apply { topMargin = dp(2) }
                 })
             })
-        }
+        }.also { bindProviderDrag(it, it, st.id) }
     }
 
     private fun ringMetricDetail(st: ProviderStatus, metric: QuotaWindow?): String {
@@ -571,6 +586,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         section.addView(headerRow)
+        bindProviderDrag(section, headerRow, st.id)
 
         st.error?.let {
             body.addView(tv("请求失败：$it", 13, 0xFFE5484D.toInt()))
@@ -668,6 +684,97 @@ class MainActivity : AppCompatActivity() {
         return section
     }
 
+    private fun bindProviderDrag(item: View, handle: View, providerId: String) {
+        val startDrag = View.OnLongClickListener { pressed ->
+            pressed.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            val state = ProviderDragState(providerId, item)
+            activeProviderDrag = state
+            val started = item.startDragAndDrop(
+                ClipData.newPlainText("provider", providerId),
+                View.DragShadowBuilder(item),
+                state,
+                0,
+            )
+            if (started) {
+                item.alpha = 0.38f
+            } else {
+                activeProviderDrag = null
+            }
+            started
+        }
+        item.setOnLongClickListener(startDrag)
+        if (handle !== item) handle.setOnLongClickListener(startDrag)
+
+        item.setOnDragListener { target, event ->
+            val state = event.localState as? ProviderDragState ?: return@setOnDragListener false
+            when (event.action) {
+                DragEvent.ACTION_DRAG_STARTED -> true
+                DragEvent.ACTION_DRAG_ENTERED -> {
+                    if (state.id != providerId) {
+                        target.animate().scaleX(1.018f).scaleY(1.018f).setDuration(90).start()
+                    }
+                    true
+                }
+                DragEvent.ACTION_DRAG_LOCATION -> {
+                    autoScrollDuringDrag(target, event.y)
+                    true
+                }
+                DragEvent.ACTION_DRAG_EXITED -> {
+                    target.animate().scaleX(1f).scaleY(1f).setDuration(90).start()
+                    true
+                }
+                DragEvent.ACTION_DROP -> {
+                    target.scaleX = 1f
+                    target.scaleY = 1f
+                    if (state.id != providerId) {
+                        val horizontalGrid =
+                            prefs.getString("home_view_style", "list") == "cards" &&
+                                resources.configuration.screenWidthDp >= 720
+                        val placeAfter = if (horizontalGrid) {
+                            event.x >= target.width / 2f
+                        } else {
+                            event.y >= target.height / 2f
+                        }
+                        val order = ProviderOrdering.move(
+                            prefs.getString(PROVIDER_ORDER_KEY, null),
+                            state.id,
+                            providerId,
+                            placeAfter,
+                        )
+                        prefs.edit().putString(PROVIDER_ORDER_KEY, ProviderOrdering.encode(order)).apply()
+                    }
+                    true
+                }
+                DragEvent.ACTION_DRAG_ENDED -> {
+                    state.source.alpha = 1f
+                    target.scaleX = 1f
+                    target.scaleY = 1f
+                    if (activeProviderDrag === state) {
+                        activeProviderDrag = null
+                        val latest = pendingDragStatuses ?: lastStatuses
+                        pendingDragStatuses = null
+                        root.post { render(latest) }
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun autoScrollDuringDrag(target: View, localY: Float) {
+        val targetLocation = IntArray(2)
+        val scrollLocation = IntArray(2)
+        target.getLocationOnScreen(targetLocation)
+        scroll.getLocationOnScreen(scrollLocation)
+        val screenY = targetLocation[1] + localY
+        val edge = dp(72)
+        when {
+            screenY < scrollLocation[1] + edge -> scroll.scrollBy(0, -dp(18))
+            screenY > scrollLocation[1] + scroll.height - edge -> scroll.scrollBy(0, dp(18))
+        }
+    }
+
     // ---------- 小工具 ----------
 
     private fun providerMark(id: String, sizeDp: Int): View {
@@ -734,5 +841,9 @@ class MainActivity : AppCompatActivity() {
             if (bottom > 0) bottomMargin = dp(bottom)
             if (gravity == Gravity.CENTER) topMargin = dp(60)
         }
+    }
+
+    companion object {
+        private const val PROVIDER_ORDER_KEY = "provider_order_v1"
     }
 }
