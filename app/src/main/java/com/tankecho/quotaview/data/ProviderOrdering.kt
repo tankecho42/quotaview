@@ -43,5 +43,16 @@ object ProviderOrdering {
         return order
     }
 
+    fun visibleAfterMove(
+        saved: String?,
+        visibleIds: List<String>,
+        draggedId: String,
+        targetId: String,
+        placeAfter: Boolean,
+    ): List<String> {
+        val visible = visibleIds.toSet()
+        return move(saved, draggedId, targetId, placeAfter).filter(visible::contains)
+    }
+
     fun encode(order: List<String>): String = order.joinToString(",")
 }

@@ -9,6 +9,7 @@ import android.view.DragEvent
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -49,7 +50,23 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private data class ProviderDragState(val id: String, val source: View)
+    private data class ProviderDragSnapshot(
+        val view: View,
+        val x: Int,
+        val y: Int,
+        val height: Int,
+        val topMargin: Int,
+        val bottomMargin: Int,
+    )
+
+    private data class ProviderDragState(
+        val id: String,
+        val source: View,
+        val originalOrder: List<String>,
+        val snapshots: Map<String, ProviderDragSnapshot>,
+        var previewOrder: List<String> = originalOrder,
+        var didDrop: Boolean = false,
+    )
 
     private var refreshJob: Job? = null
     private lateinit var prefs: SharedPreferences
@@ -62,6 +79,7 @@ class MainActivity : AppCompatActivity() {
     private var lastStatuses: List<ProviderStatus> = emptyList()
     private var activeProviderDrag: ProviderDragState? = null
     private var pendingDragStatuses: List<ProviderStatus>? = null
+    private val providerDragItems = linkedMapOf<String, View>()
     private val collapsed = mutableSetOf<String>()
     private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         settingsOpen = false
@@ -91,12 +109,14 @@ class MainActivity : AppCompatActivity() {
         swipe = SwipeRefreshLayout(this)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            clipChildren = false
             setPadding(dp(16), 0, dp(16), dp(24))
             setBackgroundColor(0xFF101218.toInt())
         }
         scroll = ScrollView(this).apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = false
+            clipChildren = false
             addView(root)
         }
         swipe.setOnRefreshListener { refresh() }
@@ -306,6 +326,7 @@ class MainActivity : AppCompatActivity() {
             pendingDragStatuses = statuses
             return
         }
+        providerDragItems.clear()
         root.removeAllViews()
         root.addView(homeViewSwitcher())
 
@@ -398,11 +419,15 @@ class MainActivity : AppCompatActivity() {
     /** 手机单列，宽屏三列；每张卡只使用圆环作为进度可视化。 */
     private fun providerRingGrid(statuses: List<ProviderStatus>): View {
         val columns = if (resources.configuration.screenWidthDp >= 720) 3 else 1
-        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+        }
         statuses.chunked(columns).forEach { group ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.TOP
+                clipChildren = false
             }
             group.forEach { status ->
                 row.addView(providerRingCard(status, compact = columns > 1), LinearLayout.LayoutParams(
@@ -685,9 +710,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindProviderDrag(item: View, handle: View, providerId: String) {
+        providerDragItems[providerId] = item
         val startDrag = View.OnLongClickListener { pressed ->
             pressed.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            val state = ProviderDragState(providerId, item)
+            val snapshots = providerDragItems.mapValues { (_, view) ->
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                val margins = view.layoutParams as? ViewGroup.MarginLayoutParams
+                ProviderDragSnapshot(
+                    view = view,
+                    x = location[0],
+                    y = location[1],
+                    height = view.height,
+                    topMargin = margins?.topMargin ?: 0,
+                    bottomMargin = margins?.bottomMargin ?: 0,
+                )
+            }
+            val state = ProviderDragState(
+                id = providerId,
+                source = item,
+                originalOrder = providerDragItems.keys.toList(),
+                snapshots = snapshots,
+            )
             activeProviderDrag = state
             val started = item.startDragAndDrop(
                 ClipData.newPlainText("provider", providerId),
@@ -696,7 +740,7 @@ class MainActivity : AppCompatActivity() {
                 0,
             )
             if (started) {
-                item.alpha = 0.38f
+                item.alpha = 0.16f
             } else {
                 activeProviderDrag = null
             }
@@ -711,25 +755,32 @@ class MainActivity : AppCompatActivity() {
                 DragEvent.ACTION_DRAG_STARTED -> true
                 DragEvent.ACTION_DRAG_ENTERED -> {
                     if (state.id != providerId) {
-                        target.animate().scaleX(1.018f).scaleY(1.018f).setDuration(90).start()
+                        target.scaleX = 1.018f
+                        target.scaleY = 1.018f
                     }
                     true
                 }
                 DragEvent.ACTION_DRAG_LOCATION -> {
                     autoScrollDuringDrag(target, event.y)
+                    val horizontalGrid = isHorizontalProviderGrid()
+                    val placeAfter = if (horizontalGrid) {
+                        event.x >= target.width / 2f
+                    } else {
+                        event.y >= target.height / 2f
+                    }
+                    updateProviderDragPreview(state, providerId, placeAfter, horizontalGrid)
                     true
                 }
                 DragEvent.ACTION_DRAG_EXITED -> {
-                    target.animate().scaleX(1f).scaleY(1f).setDuration(90).start()
+                    target.scaleX = 1f
+                    target.scaleY = 1f
                     true
                 }
                 DragEvent.ACTION_DROP -> {
                     target.scaleX = 1f
                     target.scaleY = 1f
                     if (state.id != providerId) {
-                        val horizontalGrid =
-                            prefs.getString("home_view_style", "list") == "cards" &&
-                                resources.configuration.screenWidthDp >= 720
+                        val horizontalGrid = isHorizontalProviderGrid()
                         val placeAfter = if (horizontalGrid) {
                             event.x >= target.width / 2f
                         } else {
@@ -742,6 +793,7 @@ class MainActivity : AppCompatActivity() {
                             placeAfter,
                         )
                         prefs.edit().putString(PROVIDER_ORDER_KEY, ProviderOrdering.encode(order)).apply()
+                        state.didDrop = true
                     }
                     true
                 }
@@ -751,14 +803,80 @@ class MainActivity : AppCompatActivity() {
                     target.scaleY = 1f
                     if (activeProviderDrag === state) {
                         activeProviderDrag = null
+                        val hadPendingStatuses = pendingDragStatuses != null
                         val latest = pendingDragStatuses ?: lastStatuses
                         pendingDragStatuses = null
-                        root.post { render(latest) }
+                        if (state.didDrop) {
+                            root.post { render(latest) }
+                        } else {
+                            restoreProviderDragPreview(state)
+                            if (hadPendingStatuses) {
+                                root.postDelayed({ render(latest) }, DRAG_ANIMATION_MS)
+                            }
+                        }
                     }
                     true
                 }
                 else -> true
             }
+        }
+    }
+
+    private fun isHorizontalProviderGrid(): Boolean =
+        prefs.getString("home_view_style", "list") == "cards" &&
+            resources.configuration.screenWidthDp >= 720
+
+    private fun updateProviderDragPreview(
+        state: ProviderDragState,
+        targetId: String,
+        placeAfter: Boolean,
+        horizontalGrid: Boolean,
+    ) {
+        val previewOrder = ProviderOrdering.visibleAfterMove(
+            prefs.getString(PROVIDER_ORDER_KEY, null),
+            state.originalOrder,
+            state.id,
+            targetId,
+            placeAfter,
+        )
+        if (previewOrder == state.previewOrder) return
+        state.previewOrder = previewOrder
+
+        if (horizontalGrid) {
+            previewOrder.forEachIndexed { finalIndex, id ->
+                val snapshot = state.snapshots[id] ?: return@forEachIndexed
+                val slot = state.snapshots[state.originalOrder[finalIndex]] ?: return@forEachIndexed
+                snapshot.view.animate()
+                    .translationX((slot.x - snapshot.x).toFloat())
+                    .translationY((slot.y - snapshot.y).toFloat())
+                    .setDuration(DRAG_ANIMATION_MS)
+                    .start()
+            }
+            return
+        }
+
+        val first = state.snapshots[state.originalOrder.firstOrNull()] ?: return
+        var cursorY = first.y - first.topMargin
+        previewOrder.forEach { id ->
+            val snapshot = state.snapshots[id] ?: return@forEach
+            val finalY = cursorY + snapshot.topMargin
+            snapshot.view.animate()
+                .translationX(0f)
+                .translationY((finalY - snapshot.y).toFloat())
+                .setDuration(DRAG_ANIMATION_MS)
+                .start()
+            cursorY += snapshot.topMargin + snapshot.height + snapshot.bottomMargin
+        }
+    }
+
+    private fun restoreProviderDragPreview(state: ProviderDragState) {
+        state.snapshots.values.forEach { snapshot ->
+            snapshot.view.animate()
+                .translationX(0f)
+                .translationY(0f)
+                .alpha(1f)
+                .setDuration(DRAG_ANIMATION_MS)
+                .start()
         }
     }
 
@@ -845,5 +963,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PROVIDER_ORDER_KEY = "provider_order_v1"
+        private const val DRAG_ANIMATION_MS = 170L
     }
 }

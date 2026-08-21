@@ -36,5 +36,18 @@ class ProviderOrderingTest {
         assertEquals(ProviderOrdering.defaultIds.toSet(), resolved.toSet())
     }
 
+    @Test
+    fun `visible preview follows full order while omitting disabled providers`() {
+        val preview = ProviderOrdering.visibleAfterMove(
+            saved = null,
+            visibleIds = listOf("codex", "zai", "deepseek"),
+            draggedId = "deepseek",
+            targetId = "codex",
+            placeAfter = false,
+        )
+
+        assertEquals(listOf("deepseek", "codex", "zai"), preview)
+    }
+
     private fun status(id: String) = ProviderStatus(id, id, "?", emptyList(), 0)
 }
