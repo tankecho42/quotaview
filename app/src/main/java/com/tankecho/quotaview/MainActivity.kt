@@ -26,6 +26,8 @@ import com.tankecho.quotaview.data.GlmApi
 import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderMetrics
+import com.tankecho.quotaview.data.ProviderRefreshCoordinator
+import com.tankecho.quotaview.data.ProviderRefreshRequest
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
 import com.tankecho.quotaview.data.VolcengineArkApi
@@ -34,9 +36,6 @@ import com.tankecho.quotaview.ui.ProviderIcons
 import com.tankecho.quotaview.ui.RaceBars
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -51,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var scroll: ScrollView
     private var settingsOpen = false
+    private var refreshGeneration = 0L
+    private var providersRefreshing = false
     private var lastStatuses: List<ProviderStatus> = emptyList()
     private val collapsed = mutableSetOf<String>()
     private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -185,59 +186,99 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
+        val generation = ++refreshGeneration
         refreshJob?.cancel()
-        swipe.isRefreshing = true
+        val requests = providerRequests()
+        providersRefreshing = requests.isNotEmpty()
+        swipe.isRefreshing = providersRefreshing
+        render(emptyList())
+
+        if (requests.isEmpty()) {
+            refreshJob = null
+            return
+        }
+
         refreshJob = lifecycleScope.launch {
-            val results = withContext(Dispatchers.IO) {
-                coroutineScope {
-                    listOf(
-                    async { runCatching {
-                        val tok = prefs.getString("codex_token", "").orEmpty()
-                        val acct = prefs.getString("codex_account", "").orEmpty()
-                        if (prefs.getBoolean("show_codex", true) && tok.isNotBlank()) CodexApi.fetch(tok, acct) else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val key = prefs.getString("glm_key", "").orEmpty()
-                        if (prefs.getBoolean("show_glm", true) && key.isNotBlank()) GlmApi.fetch(key) else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val key = prefs.getString("kimi_key", "").orEmpty()
-                        if (prefs.getBoolean("show_kimi", false) && key.isNotBlank()) KimiApi.fetch(key) else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val token = prefs.getString("claude_token", "").orEmpty()
-                        if (prefs.getBoolean("show_claude", false) && token.isNotBlank()) ClaudeApi.fetch(token) else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val key = prefs.getString("minimax_key", "").orEmpty()
-                        val region = prefs.getString("minimax_region", "cn").orEmpty()
-                        if (prefs.getBoolean("show_minimax", false) && key.isNotBlank()) MiniMaxApi.fetch(key, region) else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val accessKey = prefs.getString("volcengine_access_key", "").orEmpty()
-                        val secretKey = prefs.getString("volcengine_secret_key", "").orEmpty()
-                        val region = prefs.getString("volcengine_region", "cn-beijing").orEmpty()
-                        if (prefs.getBoolean("show_volcengine", false) && accessKey.isNotBlank() && secretKey.isNotBlank()) {
-                            VolcengineArkApi.fetch(accessKey, secretKey, region)
-                        } else null
-                    }.getOrNull() },
-                    async { runCatching {
-                        val key = prefs.getString("deepseek_key", "").orEmpty()
-                        if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) {
-                            val limits = DeepSeekBudgetLimits.parse(
-                                prefs.getString("deepseek_budget_24h", ""),
-                                prefs.getString("deepseek_budget_7d", ""),
-                                prefs.getString("deepseek_budget_30d", ""),
-                            )
-                            val platformToken = prefs.getString("deepseek_platform_token", "").orEmpty()
-                            DeepSeekBudgetStatus.fetch(key, platformToken, limits)
-                        } else null
-                    }.getOrNull() },
-                    ).awaitAll().filterNotNull()
+            val completed = linkedMapOf<String, ProviderStatus>()
+            try {
+                ProviderRefreshCoordinator.collect(requests) { status ->
+                    if (generation == refreshGeneration) {
+                        completed[status.id] = status
+                        render(completed.values.toList())
+                    }
+                }
+            } finally {
+                if (generation == refreshGeneration) {
+                    providersRefreshing = false
+                    swipe.isRefreshing = false
+                    render(completed.values.toList())
                 }
             }
-            swipe.isRefreshing = false
-            render(results)
+        }
+    }
+
+    private fun providerRequests(): List<ProviderRefreshRequest> = buildList {
+        val codexToken = prefs.getString("codex_token", "").orEmpty()
+        val codexAccount = prefs.getString("codex_account", "").orEmpty()
+        if (prefs.getBoolean("show_codex", true) && codexToken.isNotBlank()) {
+            add(ProviderRefreshRequest("codex", "Codex") {
+                withContext(Dispatchers.IO) { CodexApi.fetch(codexToken, codexAccount) }
+            })
+        }
+
+        val glmKey = prefs.getString("glm_key", "").orEmpty()
+        if (prefs.getBoolean("show_glm", true) && glmKey.isNotBlank()) {
+            add(ProviderRefreshRequest("glm", "GLM Coding Plan") {
+                withContext(Dispatchers.IO) { GlmApi.fetch(glmKey) }
+            })
+        }
+
+        val kimiKey = prefs.getString("kimi_key", "").orEmpty()
+        if (prefs.getBoolean("show_kimi", false) && kimiKey.isNotBlank()) {
+            add(ProviderRefreshRequest("kimi", "Kimi Code") {
+                withContext(Dispatchers.IO) { KimiApi.fetch(kimiKey) }
+            })
+        }
+
+        val claudeToken = prefs.getString("claude_token", "").orEmpty()
+        if (prefs.getBoolean("show_claude", false) && claudeToken.isNotBlank()) {
+            add(ProviderRefreshRequest("claude", "Claude") {
+                withContext(Dispatchers.IO) { ClaudeApi.fetch(claudeToken) }
+            })
+        }
+
+        val miniMaxKey = prefs.getString("minimax_key", "").orEmpty()
+        val miniMaxRegion = prefs.getString("minimax_region", "cn").orEmpty()
+        if (prefs.getBoolean("show_minimax", false) && miniMaxKey.isNotBlank()) {
+            add(ProviderRefreshRequest("minimax", "MiniMax") {
+                withContext(Dispatchers.IO) { MiniMaxApi.fetch(miniMaxKey, miniMaxRegion) }
+            })
+        }
+
+        val volcengineAccessKey = prefs.getString("volcengine_access_key", "").orEmpty()
+        val volcengineSecretKey = prefs.getString("volcengine_secret_key", "").orEmpty()
+        val volcengineRegion = prefs.getString("volcengine_region", "cn-beijing").orEmpty()
+        if (prefs.getBoolean("show_volcengine", false) &&
+            volcengineAccessKey.isNotBlank() && volcengineSecretKey.isNotBlank()
+        ) {
+            add(ProviderRefreshRequest("volcengine", "火山方舟") {
+                withContext(Dispatchers.IO) {
+                    VolcengineArkApi.fetch(volcengineAccessKey, volcengineSecretKey, volcengineRegion)
+                }
+            })
+        }
+
+        val deepSeekKey = prefs.getString("deepseek_key", "").orEmpty()
+        if (prefs.getBoolean("show_deepseek", false) && deepSeekKey.isNotBlank()) {
+            val limits = DeepSeekBudgetLimits.parse(
+                prefs.getString("deepseek_budget_24h", ""),
+                prefs.getString("deepseek_budget_7d", ""),
+                prefs.getString("deepseek_budget_30d", ""),
+            )
+            val platformToken = prefs.getString("deepseek_platform_token", "").orEmpty()
+            add(ProviderRefreshRequest("deepseek", "DeepSeek") {
+                withContext(Dispatchers.IO) { DeepSeekBudgetStatus.fetch(deepSeekKey, platformToken, limits) }
+            })
         }
     }
 
@@ -250,7 +291,12 @@ class MainActivity : AppCompatActivity() {
 
         val visible = statuses.filter { prefs.getBoolean("show_${it.id}", it.id == "codex" || it.id == "glm") }
         if (visible.isEmpty()) {
-            root.addView(tv("还没有可显示的 provider\n\n请从右上角「设置」完成配置", 15, 0xFF8A8F9E.toInt(), Gravity.CENTER))
+            val message = if (providersRefreshing) {
+                "正在并行刷新 Provider…\n\n完成一个就会立即显示"
+            } else {
+                "还没有可显示的 provider\n\n请从右上角「设置」完成配置"
+            }
+            root.addView(tv(message, 15, 0xFF8A8F9E.toInt(), Gravity.CENTER))
             return
         }
 
@@ -264,7 +310,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val updated = statuses.maxOfOrNull { it.updatedAt } ?: 0
-        root.addView(tv("更新于 ${fmtUpd.format(Date(updated * 1000))} · 下拉刷新", 12, 0xFF5A5F6E.toInt()))
+        val refreshHint = if (providersRefreshing) "仍在刷新其他 Provider…" else "下拉刷新"
+        root.addView(tv("更新于 ${fmtUpd.format(Date(updated * 1000))} · $refreshHint", 12, 0xFF5A5F6E.toInt()))
 
         // ---------- 费用模拟卡片 ----------
         val breakdown = com.tankecho.quotaview.data.CostEstimates.providerBreakdown(
