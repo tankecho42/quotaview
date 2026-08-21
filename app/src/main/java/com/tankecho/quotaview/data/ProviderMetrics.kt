@@ -27,6 +27,15 @@ object ProviderMetrics {
             ProviderMetricOption("近 7 日预算", "budget_7d"),
             ProviderMetricOption("近 30 日预算", "budget_30d"),
         )
+        "volcengine" -> listOf(
+            ProviderMetricOption("Coding 5h", "coding_session"),
+            ProviderMetricOption("Coding 周", "coding_week"),
+            ProviderMetricOption("Coding 月", "coding_month"),
+            ProviderMetricOption("Agent 5h", "agent_5h"),
+            ProviderMetricOption("Agent 日", "agent_daily"),
+            ProviderMetricOption("Agent 周", "agent_week"),
+            ProviderMetricOption("Agent 月", "agent_month"),
+        )
         else -> emptyList()
     }
 

@@ -11,8 +11,8 @@ android {
         applicationId = "com.tankecho.quotaview"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
-        versionName = "0.13.8"
+        versionCode = 49
+        versionName = "0.14.0"
     }
 
     buildTypes {

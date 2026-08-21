@@ -31,6 +31,7 @@ import com.tankecho.quotaview.data.KimiApi
 import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
+import com.tankecho.quotaview.data.VolcengineArkApi
 import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
@@ -733,6 +734,11 @@ class OverlayService : Service() {
             prefs.getString("minimax_key", "").orEmpty(),
             prefs.getString("minimax_region", "cn").orEmpty(),
         )
+        "volcengine" -> VolcengineArkApi.fetch(
+            prefs.getString("volcengine_access_key", "").orEmpty(),
+            prefs.getString("volcengine_secret_key", "").orEmpty(),
+            prefs.getString("volcengine_region", "cn-beijing").orEmpty(),
+        )
         "deepseek" -> DeepSeekBudgetStatus.fetch(
             prefs.getString("deepseek_key", "").orEmpty(),
             prefs.getString("deepseek_platform_token", "").orEmpty(),
@@ -751,6 +757,7 @@ class OverlayService : Service() {
         "kimi" -> "Kimi Code"
         "claude" -> "Claude"
         "minimax" -> "MiniMax"
+        "volcengine" -> "火山方舟"
         "deepseek" -> "DeepSeek"
         else -> id
     }
@@ -761,6 +768,7 @@ class OverlayService : Service() {
         "kimi" -> "K"
         "claude" -> "C"
         "minimax" -> "M"
+        "volcengine" -> "V"
         "deepseek" -> "D"
         else -> "?"
     }

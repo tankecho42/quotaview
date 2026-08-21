@@ -4,7 +4,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 
 ## 当前基线
 
-- 版本：0.13.8（versionCode 48）
+- 版本：0.14.0（versionCode 49）
 - Android：minSdk 26，targetSdk / compileSdk 36
 - UI：Kotlin 纯代码 View，无 Compose/XML layout；主页支持折叠列表与响应式圆环卡片
 - 数据：App 直连各 Provider 的额度或余额端点，不经过中间服务器
@@ -19,6 +19,7 @@ QuotaView 是多 Provider 的 Android 套餐额度与 API 余额仪表盘。核�
 - Kimi Code：Coding Plan 额度窗口
 - Claude：Claude.ai OAuth 套餐额度窗口
 - MiniMax：Coding Plan 额度窗口（中国区 / 国际区）
+- 火山方舟：Coding Plan（5h / 周 / 月）、Agent Plan AFP（5h / 日 / 周 / 月）及火山账户可用余额；使用账号级 AK/SK Signature V4，三类数据独立查询与容错
 - DeepSeek：官方 API 账户余额 + 用户自定义今日 / 近 7 日 / 近 30 日预算；消费取自 DeepSeek Platform 官方日账单并按自然日汇总，允许超过 100%
 - Qwen / 阿里云百炼：官方尚未开放剩余额度查询 API，设置页明确标记为待开放
 
@@ -40,6 +41,7 @@ APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
 - `SettingsActivity.kt`：Provider、主页圆环主指标、凭证与悬浮窗设置
 - `OverlayService.kt`：三态悬浮窗、横竖屏可见性、手势与定时刷新
 - `data/Providers.kt`：Provider API、统一额度/余额模型与费用估算
+- `data/VolcengineArkApi.kt`：火山方舟 Coding / Agent Plan、账户余额与 Signature V4 请求签名
 - `ui/`：双进度条、双圆环与折叠边缘条
 - `tools/collect_tokens.py`：Mac 侧 token 明细汇总工具
 

@@ -31,6 +31,7 @@ import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderMetricOption
 import com.tankecho.quotaview.data.ProviderMetrics
 import com.tankecho.quotaview.data.ProviderStatus
+import com.tankecho.quotaview.data.VolcengineArkApi
 import com.tankecho.quotaview.data.meterWindows
 import com.tankecho.quotaview.ui.ProviderIcons
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,7 @@ class SettingsActivity : AppCompatActivity() {
                 .apply()
         }
         if (!prefs.contains("minimax_region")) prefs.edit().putString("minimax_region", "cn").apply()
+        if (!prefs.contains("volcengine_region")) prefs.edit().putString("volcengine_region", "cn-beijing").apply()
 
         supportActionBar?.hide()
         val root = LinearLayout(this).apply {
@@ -123,6 +125,19 @@ class SettingsActivity : AppCompatActivity() {
             )
         })
 
+        root.addView(providerCard(prefs, "volcengine", 0, "火山方舟", "Coding Plan · Agent Plan · 账户余额",
+            listOf(
+                FieldDef("volcengine_access_key", "Access Key ID", "火山引擎 IAM 的 Access Key ID", secret = true),
+                FieldDef("volcengine_secret_key", "Secret Access Key", "与 Access Key 配对的 Secret Key", secret = true),
+                FieldDef("volcengine_region", "Region", "默认 cn-beijing"),
+            ), defaultEnabled = false) {
+            VolcengineArkApi.fetch(
+                prefs.getString("volcengine_access_key", "").orEmpty(),
+                prefs.getString("volcengine_secret_key", "").orEmpty(),
+                prefs.getString("volcengine_region", "cn-beijing").orEmpty(),
+            )
+        })
+
         root.addView(providerCard(prefs, "deepseek", 0, "DeepSeek", "官方余额 · 官方日账单预算",
             listOf(
                 FieldDef("deepseek_key", "API key", "platform.deepseek.com 的 API key", secret = true),
@@ -177,7 +192,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun providerCard(
         prefs: SharedPreferences, id: String, iconRes: Int, title: String, subtitle: String,
-        fields: List<FieldDef>, defaultEnabled: Boolean = true, validator: () -> ProviderStatus,
+        fields: List<FieldDef>, defaultEnabled: Boolean = true, validator: suspend () -> ProviderStatus,
     ): LinearLayout {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -266,6 +281,17 @@ class SettingsActivity : AppCompatActivity() {
                 }
             })
         }
+        if (id == "volcengine") {
+            body.addView(TextView(this).apply {
+                text = "用量与余额查询需要账号级 AK/SK 签名，不是方舟推理 API Key。QuotaView 会分别查询 Coding Plan、Agent Plan 和费用中心余额；未订阅或无权限的单项不会阻断其他数据。建议在 IAM 创建只读子用户凭证。"
+                textSize = 12f
+                setTextColor(0xFF6F7482.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(10) }
+            })
+        }
         card.addView(body)
         body.visibility = View.GONE
 
@@ -287,11 +313,11 @@ class SettingsActivity : AppCompatActivity() {
                     return@setOnCheckedChangeListener
                 }
                 validationJob = lifecycleScope.launch {
-                    val st = withContext(Dispatchers.IO) { runCatching(validator).getOrNull() }
+                    val st = withContext(Dispatchers.IO) { runCatching { validator() }.getOrNull() }
                     val ok = st != null && st.error == null && st.hasData
                     if (ok) {
                         prefs.edit().putBoolean("show_$id", true).apply()
-                        val count = st!!.windows.size + st.balances.size
+                        val count = st!!.windows.size + st.balances.size + st.budgets.size
                         Toast.makeText(this@SettingsActivity, "$title 连通，读取到 $count 项数据", Toast.LENGTH_SHORT).show()
                     } else {
                         sw.isChecked = false
@@ -303,7 +329,7 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 prefs.edit().putBoolean("show_$id", false).apply()
                 if (prefs.getString("ring_provider", "codex") == id) {
-                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax", "deepseek")
+                    val fallback = listOf("codex", "glm", "kimi", "claude", "minimax", "volcengine", "deepseek")
                         .firstOrNull { it != id && ringProviderReady(prefs, it) }
                     if (fallback != null) {
                         prefs.edit().putString("ring_provider", fallback).apply()
@@ -407,6 +433,15 @@ class SettingsActivity : AppCompatActivity() {
     )
 
     private fun windowOptions(prefs: SharedPreferences, provider: String): List<Pair<String, String>> {
+        if (provider == "volcengine") return listOf(
+            "Coding 5h" to "coding_session",
+            "Coding 周" to "coding_week",
+            "Coding 月" to "coding_month",
+            "Agent 5h" to "agent_5h",
+            "Agent 日" to "agent_daily",
+            "Agent 周" to "agent_week",
+            "Agent 月" to "agent_month",
+        )
         if (provider != "deepseek") return standardWindowOptions
         val limits = deepSeekLimits(prefs)
         return buildList {
@@ -515,7 +550,8 @@ class SettingsActivity : AppCompatActivity() {
             provRow.removeAllViews()
             listOf(
                 "Codex" to "codex", "GLM" to "glm", "Kimi" to "kimi",
-                "Claude" to "claude", "MiniMax" to "minimax", "DeepSeek" to "deepseek",
+                "Claude" to "claude", "MiniMax" to "minimax", "火山方舟" to "volcengine",
+                "DeepSeek" to "deepseek",
             ).forEach { (name, id) ->
                 provRow.addView(makeProviderChip(name, id, id == cur) {
                     if (id != cur) {
@@ -574,6 +610,11 @@ class SettingsActivity : AppCompatActivity() {
                         "minimax" -> MiniMaxApi.fetch(
                             prefs.getString("minimax_key", "").orEmpty(),
                             prefs.getString("minimax_region", "cn").orEmpty(),
+                        )
+                        "volcengine" -> VolcengineArkApi.fetch(
+                            prefs.getString("volcengine_access_key", "").orEmpty(),
+                            prefs.getString("volcengine_secret_key", "").orEmpty(),
+                            prefs.getString("volcengine_region", "cn-beijing").orEmpty(),
                         )
                         "deepseek" -> DeepSeekBudgetStatus.fetch(
                             prefs.getString("deepseek_key", "").orEmpty(),
@@ -676,6 +717,7 @@ class SettingsActivity : AppCompatActivity() {
         "claude" -> "C"
         "minimax" -> "M"
         "qwen" -> "Q"
+        "volcengine" -> "V"
         "deepseek" -> "D"
         else -> "?"
     }
@@ -694,9 +736,11 @@ class SettingsActivity : AppCompatActivity() {
             "kimi" -> "kimi_key"
             "claude" -> "claude_token"
             "minimax" -> "minimax_key"
+            "volcengine" -> "volcengine_access_key"
             else -> return false
         }
-        return enabled && !prefs.getString(credentialKey, "").isNullOrBlank()
+        if (!enabled || prefs.getString(credentialKey, "").isNullOrBlank()) return false
+        return id != "volcengine" || !prefs.getString("volcengine_secret_key", "").isNullOrBlank()
     }
 
     private fun sectionLabel(text: String): TextView = TextView(this).apply {

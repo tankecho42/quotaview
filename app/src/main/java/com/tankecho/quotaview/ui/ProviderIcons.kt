@@ -13,6 +13,7 @@ object ProviderIcons {
         "claude" -> R.drawable.ic_claude
         "qwen" -> R.drawable.ic_qwen
         "minimax" -> R.drawable.ic_minimax
+        "volcengine" -> R.drawable.ic_volcengine
         "deepseek" -> R.drawable.ic_deepseek
         else -> 0
     }

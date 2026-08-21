@@ -28,6 +28,7 @@ import com.tankecho.quotaview.data.MiniMaxApi
 import com.tankecho.quotaview.data.ProviderMetrics
 import com.tankecho.quotaview.data.ProviderStatus
 import com.tankecho.quotaview.data.QuotaWindow
+import com.tankecho.quotaview.data.VolcengineArkApi
 import com.tankecho.quotaview.ui.DualRingView
 import com.tankecho.quotaview.ui.ProviderIcons
 import com.tankecho.quotaview.ui.RaceBars
@@ -213,6 +214,14 @@ class MainActivity : AppCompatActivity() {
                         if (prefs.getBoolean("show_minimax", false) && key.isNotBlank()) MiniMaxApi.fetch(key, region) else null
                     }.getOrNull() },
                     async { runCatching {
+                        val accessKey = prefs.getString("volcengine_access_key", "").orEmpty()
+                        val secretKey = prefs.getString("volcengine_secret_key", "").orEmpty()
+                        val region = prefs.getString("volcengine_region", "cn-beijing").orEmpty()
+                        if (prefs.getBoolean("show_volcengine", false) && accessKey.isNotBlank() && secretKey.isNotBlank()) {
+                            VolcengineArkApi.fetch(accessKey, secretKey, region)
+                        } else null
+                    }.getOrNull() },
+                    async { runCatching {
                         val key = prefs.getString("deepseek_key", "").orEmpty()
                         if (prefs.getBoolean("show_deepseek", false) && key.isNotBlank()) {
                             val limits = DeepSeekBudgetLimits.parse(
@@ -354,6 +363,7 @@ class MainActivity : AppCompatActivity() {
     private fun providerRingCard(st: ProviderStatus, compact: Boolean): View {
         val selectedKey = prefs.getString("home_metric_${st.id}", null)
         val metric = ProviderMetrics.select(st, selectedKey)
+        val balance = st.balances.firstOrNull().takeIf { metric == null }
         val ringSize = dp(if (compact) 78 else 112)
         val color = metricHealthColor(metric)
         return card().apply {
@@ -389,6 +399,7 @@ class MainActivity : AppCompatActivity() {
                         add(when {
                             st.error != null -> "请求失败"
                             metric != null -> metric.label
+                            balance != null -> balance.label
                             else -> "暂无可用指标"
                         })
                     }.joinToString(" · ")
@@ -401,7 +412,9 @@ class MainActivity : AppCompatActivity() {
                     ).apply { topMargin = dp(3) }
                 })
                 addView(TextView(this@MainActivity).apply {
-                    text = metric?.let { "${it.usedPercent}%" } ?: "—"
+                    text = metric?.let { "${it.usedPercent}%" }
+                        ?: balance?.let { formatBalance(it.amount, it.currency) }
+                        ?: "—"
                     textSize = if (compact) 20f else 28f
                     setTextColor(if (st.error != null) 0xFFE5484D.toInt() else color)
                     paint.isFakeBoldText = true
@@ -427,7 +440,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun ringMetricDetail(st: ProviderStatus, metric: QuotaWindow?): String {
         if (st.error != null) return st.error
-        if (metric == null) return "请在设置中配置并选择主页圆环指标"
+        if (metric == null) return st.balances.firstOrNull()?.detail
+            ?: if (st.balances.isNotEmpty()) "账户余额" else "请在设置中配置并选择主页圆环指标"
         if (metric.selectionKey.startsWith("budget_")) {
             val days = when (metric.selectionKey) {
                 "budget_today" -> 1
@@ -608,6 +622,7 @@ class MainActivity : AppCompatActivity() {
             "kimi" -> "K" to 0xFF7357D9.toInt()
             "claude" -> "C" to 0xFFD97757.toInt()
             "minimax" -> "M" to 0xFF3B82F6.toInt()
+            "volcengine" -> "V" to 0xFF1664FF.toInt()
             "deepseek" -> "D" to 0xFF4D6BFE.toInt()
             else -> "?" to 0xFF5A5F6E.toInt()
         }

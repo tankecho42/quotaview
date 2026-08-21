@@ -276,6 +276,13 @@ class ProvidersTest {
             listOf("budget_today", "budget_7d", "budget_30d"),
             ProviderMetrics.options("deepseek").map { it.key },
         )
+        assertEquals(
+            listOf(
+                "coding_session", "coding_week", "coding_month",
+                "agent_5h", "agent_daily", "agent_week", "agent_month",
+            ),
+            ProviderMetrics.options("volcengine").map { it.key },
+        )
     }
 
     @Test
